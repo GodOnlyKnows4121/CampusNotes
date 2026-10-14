@@ -95,7 +95,7 @@ fun LibraryScreen() {
                     val files = data.children(topic.id).filter { it.kind == if (artifactTab == 0) NodeKind.ORIGINAL else NodeKind.OUTPUT }
                     if (files.isEmpty()) {
                         Text(if (artifactTab == 0) "暂无原件" else "暂无 AI 成果", modifier = Modifier.testTag("empty_outputs"))
-                        Text(if (artifactTab == 0) "导入后保存本地副本，单文件上限 100 MB。" else "AI 尚未接入；生成成果会与原件分开保存。")
+                        Text(if (artifactTab == 0) "导入后保存本地副本，单文件上限 100 MB。" else "在 AI → 代理整理文本原件，成果在此单独保存。")
                     }
                     files.forEach { file ->
                         OutlinedCard {

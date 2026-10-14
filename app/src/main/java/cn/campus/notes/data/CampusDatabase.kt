@@ -3,6 +3,8 @@ package cn.campus.notes.data
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 fun newId(): String = UUID.randomUUID().toString()
 
@@ -27,6 +29,17 @@ data class LibraryNode(@PrimaryKey val id: String = newId(), val parentId: Strin
     val kind: String, val title: String, val rule: String = "", val localName: String? = null,
     val mime: String = "application/octet-stream", val bytes: Long = 0, val example: Boolean = false)
 
+@Entity(tableName = "chat_messages")
+data class ChatMessage(@PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val role: String, val content: String, val status: String = "complete", val detail: String = "",
+    val createdAt: Long = System.currentTimeMillis())
+
+@Entity(tableName = "organize_tasks")
+data class OrganizeTask(@PrimaryKey val id: String = newId(), val topicId: String,
+    val topicTitle: String, val rule: String, val sources: String, val sourceStamp: String,
+    val title: String = "", val body: String = "", val status: String = "planning",
+    val detail: String = "", val outputId: String? = null, val createdAt: Long = System.currentTimeMillis())
+
 data class LocalData(val notes: List<Note> = emptyList(), val courses: List<LocalCourse> = emptyList(),
     val nodes: List<LibraryNode> = emptyList()) {
     fun children(id: String?) = nodes.filter { it.parentId == id }
@@ -35,6 +48,16 @@ data class LocalData(val notes: List<Note> = emptyList(), val courses: List<Loca
 
 @Dao
 interface CampusDao {
+    @Query("SELECT * FROM chat_messages ORDER BY id") fun observeChat(): Flow<List<ChatMessage>>
+    @Query("SELECT * FROM chat_messages ORDER BY id") suspend fun chat(): List<ChatMessage>
+    @Insert suspend fun insert(message: ChatMessage): Long
+    @Upsert suspend fun save(message: ChatMessage)
+    @Query("DELETE FROM chat_messages") suspend fun clearChat()
+    @Query("UPDATE chat_messages SET status = 'interrupted', detail = '应用退出导致中断，部分回复不进入后续对话上下文' WHERE role = 'assistant' AND status = 'streaming'") suspend fun interruptChat()
+    @Query("SELECT * FROM organize_tasks ORDER BY createdAt DESC, id DESC") fun observeTasks(): Flow<List<OrganizeTask>>
+    @Query("SELECT * FROM organize_tasks WHERE id = :id") suspend fun task(id: String): OrganizeTask?
+    @Upsert suspend fun save(task: OrganizeTask)
+    @Query("UPDATE organize_tasks SET status = 'interrupted', detail = '应用退出导致计划中断，未执行写入' WHERE status = 'planning'") suspend fun interruptPlans()
     @Query("SELECT * FROM notes ORDER BY updatedAt DESC, id") fun observeNotes(): Flow<List<Note>>
     @Query("SELECT * FROM courses ORDER BY day, slot, id") fun observeCourses(): Flow<List<LocalCourse>>
     @Query("SELECT * FROM nodes ORDER BY rowid") fun observeNodes(): Flow<List<LibraryNode>>
@@ -49,5 +72,15 @@ interface CampusDao {
     @Query("DELETE FROM nodes WHERE id = :id") suspend fun deleteNode(id: String)
 }
 
-@Database(entities = [Note::class, LocalCourse::class, LibraryNode::class], version = 1, exportSchema = true)
-abstract class CampusDatabase : RoomDatabase() { abstract fun dao(): CampusDao }
+@Database(entities = [Note::class, LocalCourse::class, LibraryNode::class, ChatMessage::class, OrganizeTask::class], version = 2, exportSchema = true)
+abstract class CampusDatabase : RoomDatabase() {
+    abstract fun dao(): CampusDao
+    companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL, createdAt INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS organize_tasks (id TEXT PRIMARY KEY NOT NULL, topicId TEXT NOT NULL, topicTitle TEXT NOT NULL, rule TEXT NOT NULL, sources TEXT NOT NULL, sourceStamp TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL, outputId TEXT, createdAt INTEGER NOT NULL)")
+            }
+        }
+    }
+}

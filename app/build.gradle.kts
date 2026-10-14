@@ -11,8 +11,8 @@ android {
         applicationId = "cn.campus.notes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-local"
+        versionCode = 3
+        versionName = "0.3.0-ai"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
@@ -24,6 +24,7 @@ android {
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.room:room-runtime:2.8.4")
     kapt("androidx.room:room-compiler:2.8.4")
     implementation("androidx.datastore:datastore-preferences:1.2.1")
@@ -37,6 +38,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation(platform("androidx.compose:compose-bom:2025.09.01"))
     testImplementation("androidx.compose.ui:ui-test-junit4")

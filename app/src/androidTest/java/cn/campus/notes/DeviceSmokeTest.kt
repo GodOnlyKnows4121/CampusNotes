@@ -73,6 +73,17 @@ class DeviceSmokeTest {
         compose.onNodeWithTag("course_details").assertDoesNotExist()
     }
 
+    @Test fun aiModesKeepDraftAndAgentBoundaryIsVisible() {
+        compose.onNodeWithTag("nav_AI").performClick()
+        compose.onNodeWithTag("ai_draft").performTextInput("真机临时草稿")
+        compose.onNodeWithTag("ai_agent").performClick()
+        compose.onNodeWithTag("agent_generate").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("执行边界：", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ai_chat").performClick()
+        compose.onNodeWithTag("ai_draft").assertTextContains("真机临时草稿")
+        compose.onNodeWithTag("ai_send").assertIsDisplayed()
+    }
+
     @Test fun existingLibraryHierarchyAndBackWork() {
         val topic = data.nodes.firstOrNull { it.kind == NodeKind.TOPIC }
         assumeTrue("No topic available; existing personal data is left unchanged", topic != null)

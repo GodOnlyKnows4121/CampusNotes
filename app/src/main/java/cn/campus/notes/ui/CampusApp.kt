@@ -56,7 +56,7 @@ fun CampusApp() {
             topBar = { TopAppBar(title = {
                 Text(if (current == Destination.HOME) "校园记录" else current.label,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }, actions = { Text(if (busy) "处理中…" else "本地版", style = MaterialTheme.typography.labelMedium,
+            }, actions = { Text(if (busy) "处理中…" else "本地优先", style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(end = 16.dp)) }) },
             bottomBar = {
                 NavigationBar {

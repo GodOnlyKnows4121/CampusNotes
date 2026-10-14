@@ -66,7 +66,7 @@ class CampusUiTest {
         compose.onNodeWithTag("ai_screen").assertIsDisplayed()
         screenshot("ai-small")
         compose.onNodeWithTag("ai_agent").performClick()
-        compose.onNodeWithText("开始整理 · 尚未实现").assertIsNotEnabled()
+        compose.onNodeWithTag("agent_generate").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithTag("nav_LIBRARY").performClick()
         compose.onNodeWithTag("library_screen").assertIsDisplayed()
         screenshot("library-small")
@@ -152,6 +152,57 @@ class CampusUiTest {
         compose.onNodeWithTag("more_models").performClick()
         compose.onNodeWithTag("model_endpoint").assertTextContains("https://example.com/v1")
         compose.onNodeWithTag("model_name").assertTextContains("test-chat")
+    }
+
+    @Test fun switchingAiModesKeepsDraftAndMissingKeyShowsRealError() {
+        compose.setContent { CampusApp() }
+        awaitHome()
+        compose.onNodeWithTag("nav_AI").performClick()
+        compose.onNodeWithTag("ai_draft").performTextInput("待发送的问题")
+        compose.onNodeWithTag("ai_agent").performClick()
+        compose.onNodeWithTag("ai_chat").performClick()
+        compose.onNodeWithTag("ai_draft").assertTextContains("待发送的问题")
+        val vm = androidx.lifecycle.ViewModelProvider(compose.activity)[cn.campus.notes.ui.CampusViewModel::class.java]
+        compose.waitUntil(10_000) { vm.aiReady.value }
+        compose.onNodeWithTag("ai_send").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("操作未完成").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("知道了").performClick()
+        compose.onNodeWithTag("ai_draft").assertTextContains("待发送的问题")
+        runBlocking { org.junit.Assert.assertTrue((compose.activity.application as CampusApplication).database.dao().chat().isEmpty()) }
+    }
+
+    @Test fun agentPreviewConfirmationCreatesRealOutputAndPreservesOriginal() {
+        val app = compose.activity.application as CampusApplication
+        val task = runBlocking {
+            java.io.ByteArrayInputStream("课堂文本".toByteArray()).use { app.repository.importStream("math-0", "课堂.txt", "text/plain", it) }
+            val source = app.repository.organizeSnapshot("math-0")
+            cn.campus.notes.data.OrganizeTask(topicId = source.topicId, topicTitle = source.topicTitle, rule = source.rule,
+                sources = source.sources, sourceStamp = source.stamp, title = "测试预览", body = "测试整理结果", status = "preview")
+                .also { app.database.dao().save(it) }
+        }
+        compose.setContent { CampusApp() }; awaitHome()
+        compose.onNodeWithTag("nav_AI").performClick()
+        compose.onNodeWithTag("ai_agent").performClick()
+        compose.onNodeWithText("查看操作预览").performScrollTo().performClick()
+        compose.onNodeWithText("测试整理结果").assertIsDisplayed()
+        screenshot("agent-preview")
+        compose.onNodeWithText("确认写入沙箱").performClick()
+        compose.waitUntil(10_000) { runBlocking { app.database.dao().task(task.id)?.status == "complete" } }
+        runBlocking {
+            org.junit.Assert.assertEquals(1, app.database.dao().nodes().count { it.kind == cn.campus.notes.data.NodeKind.OUTPUT })
+            val original = app.database.dao().nodes().single { it.kind == cn.campus.notes.data.NodeKind.ORIGINAL }
+            org.junit.Assert.assertEquals("课堂文本", app.repository.document(original.localName!!).readText())
+        }
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w640dp-h360dp-land")
+    fun landscapeChatKeepsDraftAndSendVisible() {
+        compose.setContent { CampusApp() }; awaitHome()
+        compose.onNodeWithTag("nav_AI").performClick()
+        compose.onNodeWithTag("ai_draft").assertIsDisplayed()
+        compose.onNodeWithTag("ai_send").assertIsDisplayed()
+        screenshot("ai-landscape")
     }
 
     @Test

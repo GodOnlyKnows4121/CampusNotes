@@ -34,7 +34,7 @@ fun HomeScreen(onNavigate: (Destination) -> Unit) {
                         Modifier.weight(1f).fillMaxHeight()) { onNavigate(Destination.SCHEDULE) }
                     HomeTile("最近资料", latest, "学科 → 课堂主题 → 原件与成果", compact,
                         Modifier.weight(1f).fillMaxHeight()) { onNavigate(Destination.LIBRARY) }
-                    HomeTile("AI 助手", "对话与整理代理", "尚未配置模型，功能待接入", compact,
+                    HomeTile("AI 助手", "对话与整理代理", "配置 DeepSeek 后使用流式对话与文本整理", compact,
                         Modifier.weight(1f).fillMaxHeight()) { onNavigate(Destination.AI) }
                 }
             } else {
@@ -42,7 +42,7 @@ fun HomeScreen(onNavigate: (Destination) -> Unit) {
                     Modifier.weight(1f).fillMaxWidth()) { onNavigate(Destination.SCHEDULE) }
                 HomeTile("最近资料", latest, "学科 → 课堂主题 → 原件与成果", compact,
                     Modifier.weight(1f).fillMaxWidth()) { onNavigate(Destination.LIBRARY) }
-                HomeTile("AI 助手", "对话与整理代理", "尚未配置模型，功能待接入", compact,
+                HomeTile("AI 助手", "对话与整理代理", "配置 DeepSeek 后使用流式对话与文本整理", compact,
                     Modifier.weight(1f).fillMaxWidth()) { onNavigate(Destination.AI) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -7,6 +7,7 @@ import android.util.Base64
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import java.net.URI
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -54,6 +55,7 @@ class SettingsStore(context: Context, private val cipher: KeyCipher = KeyCipher(
         ProviderConfig(p[field(k,"endpoint")] ?: "", p[field(k,"model")] ?: "", !p[field(k,"key")].isNullOrBlank())
     }, p[sandbox] ?: false) }
     suspend fun save(kind: ProviderKind, endpoint: String, model: String, newKey: String, removeKey: Boolean) {
+        require(endpoint.length <= 2048 && model.length <= 200) { "地址或模型名称过长" }
         validateEndpoint(endpoint)
         require(newKey.length <= 8192) { "密钥长度异常" }
         val encrypted = if (newKey.isNotBlank() && !removeKey) cipher.encrypt(newKey.trim(), kind) else null
@@ -64,6 +66,18 @@ class SettingsStore(context: Context, private val cipher: KeyCipher = KeyCipher(
         }
     }
     suspend fun sandbox(enabled: Boolean) { store.edit { it[sandbox] = enabled } }
+    // Decrypt only for an explicit request, never expose plaintext through observable settings.
+    suspend fun credentials(kind: ProviderKind): ProviderCredentials {
+        val p = store.data.first()
+        val config = ProviderConfig(p[field(kind,"endpoint")] ?: "", p[field(kind,"model")] ?: "")
+        require(config.endpoint.isNotBlank() && config.model.isNotBlank()) { "请在更多 → 模型配置填写 ${kind.label} 地址和模型" }
+        val encrypted = p[field(kind,"key")]
+        require(!encrypted.isNullOrBlank()) { "请在更多 → 模型配置保存 ${kind.label} 密钥" }
+        val secret = try { cipher.decrypt(encrypted, kind) } catch (_: Exception) {
+            throw IllegalStateException("${kind.label} 密钥无法解密，请重新保存")
+        }
+        return ProviderCredentials(config.endpoint, config.model, secret)
+    }
     companion object {
         fun validateEndpoint(value: String) {
             if (value.isBlank()) return
@@ -73,4 +87,9 @@ class SettingsStore(context: Context, private val cipher: KeyCipher = KeyCipher(
             }
         }
     }
+}
+
+/** Not a data class: toString must never include key material. */
+class ProviderCredentials(val endpoint: String, val model: String, val key: String) {
+    override fun toString() = "ProviderCredentials(redacted)"
 }

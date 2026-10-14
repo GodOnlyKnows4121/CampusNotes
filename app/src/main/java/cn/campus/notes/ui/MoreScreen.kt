@@ -28,8 +28,8 @@ fun MoreScreen() {
         ExampleNotice("更多 · V1.0 · 本地功能")
         listOf(
             Triple("review", "复习", "复习计划与卡片 · 尚未实现"),
-            Triple("models", "模型配置", "分别保存 DeepSeek、ASR、OCR 配置；调用尚未接入"),
-            Triple("permissions", "沙箱权限", "保存整理授权偏好；执行器尚未实现"),
+            Triple("models", "模型配置", "DeepSeek 已接入；ASR、OCR 分别保存配置，识别尚未接入"),
+            Triple("permissions", "沙箱权限", "授权按大组规则自动新建整理成果；原件保留"),
             Triple("storage", "本地存储", "查看占用与清理未关联副本")
         ).forEach { (key,title,description) -> Box(Modifier.testTag("more_$key")) {
             FeatureCard(title,description) { selected = key }
@@ -38,7 +38,7 @@ fun MoreScreen() {
             OutlinedButton(onClick = { vm.act("示例已载入，示例条目均带标注") { vm.repository.loadExamples() } },
                 enabled = !busy, modifier = Modifier.testTag("load_examples")) { Text("载入示例课表与资料结构") }
         }
-        Text("0.2.0 · 本地优先\n记录与资料保存在本机。尚未接入 AI、识别或云同步。卸载应用会删除本地数据；备份功能尚未实现。",
+        Text("0.3.0 · 本地优先\n对话与整理日志保存在本机。主动发送时会调用配置的模型服务；识别、云同步与备份尚未实现。卸载应用会删除本地数据。",
             style = MaterialTheme.typography.bodySmall)
     }
     when (selected) {
@@ -46,10 +46,10 @@ fun MoreScreen() {
         "models" -> ModelSettingsDialog { selected = null }
         "permissions" -> AlertDialog(onDismissRequest = { selected = null }, title = { Text("沙箱权限") },
             text = { Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("允许未来的整理代理在 App 私有目录内按大组规则整理。当前只保存偏好，尚无自动执行任务。")
+                Text("开启后，点击生成整理计划会按所选主题所属大组的规则，自动在 App 私有目录中新建一份 AI 成果。关闭时必须先查看预览并确认写入。当前只支持 UTF-8 文本原件。")
                 Row { Text("允许沙箱内整理", Modifier.weight(1f).padding(top = 12.dp))
                     Switch(settings.sandboxEnabled, { enabled -> vm.act { vm.settingsStore.sandbox(enabled) } }, enabled = !busy) }
-                Text("沙箱外敏感修改必须逐次展示操作内容并确认，不能通过此开关跳过。原件默认保留。")
+                Text("生成计划会上传所选原件文本与规则到配置的 DeepSeek 服务。执行仅新建成果，不删除、覆盖或移动原件。沙箱外修改暂不提供执行入口；未来接入时必须逐次确认。")
             } }, confirmButton = { TextButton(onClick = { selected = null }) { Text("返回") } })
         "storage" -> AlertDialog(onDismissRequest = { selected = null }, title = { Text("本地存储") },
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -73,8 +73,8 @@ private fun ModelSettingsDialog(onDismiss: () -> Unit) {
     val kind = ProviderKind.valueOf(provider)
     val config = settings.providers[kind] ?: ProviderConfig()
     key(kind) {
-        var endpoint by rememberSaveable { mutableStateOf(config.endpoint) }
-        var model by rememberSaveable { mutableStateOf(config.model) }
+        var endpoint by rememberSaveable { mutableStateOf(config.endpoint.ifBlank { if (kind == ProviderKind.DEEPSEEK) "https://api.deepseek.com" else "" }) }
+        var model by rememberSaveable { mutableStateOf(config.model.ifBlank { if (kind == ProviderKind.DEEPSEEK) "deepseek-flash" else "" }) }
         // Deliberately not saveable: never place plaintext API keys in saved instance state.
         var secret by remember { mutableStateOf("") }
         var removeKey by rememberSaveable { mutableStateOf(false) }
@@ -90,7 +90,8 @@ private fun ModelSettingsDialog(onDismiss: () -> Unit) {
                     ProviderKind.entries.forEach { item -> FilterChip(kind == item, { provider = item.name },
                         label = { Text(item.label) }, enabled = !busy) }
                 }
-                Text("各服务独立保存；切换服务前请先保存。当前不调用网络或验证服务可用性。")
+                Text("各服务独立保存；切换服务前请先保存。保存配置不调用网络；DeepSeek 在主动发送或生成计划时调用，ASR/OCR 识别尚未接入。")
+                if (kind == ProviderKind.DEEPSEEK) Text("地址可填写 API 基址或完整 /chat/completions 地址。模型以服务商当前可用名称为准；请求不会自动重试。")
                 OutlinedTextField(endpoint, { endpoint = it }, label = { Text("HTTPS API 地址") }, singleLine = true, enabled = !busy, modifier = Modifier.testTag("model_endpoint"))
                 OutlinedTextField(model, { model = it }, label = { Text("模型 / 服务名称") }, singleLine = true, enabled = !busy, modifier = Modifier.testTag("model_name"))
                 Text(if (config.hasKey) "已保存加密密钥；留空保持原值" else "尚未保存密钥")
