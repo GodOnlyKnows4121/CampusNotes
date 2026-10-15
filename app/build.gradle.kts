@@ -11,8 +11,8 @@ android {
         applicationId = "cn.campus.notes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.4.1-campus"
+        versionCode = 6
+        versionName = "0.5.0-content"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
@@ -24,6 +24,7 @@ android {
 }
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 dependencies {
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.room:room-runtime:2.8.4")
     kapt("androidx.room:room-compiler:2.8.4")

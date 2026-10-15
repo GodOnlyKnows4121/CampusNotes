@@ -16,6 +16,8 @@ import kotlinx.coroutines.withContext
 class CampusViewModel(application: Application) : AndroidViewModel(application) {
     val repository = (application as CampusApplication).repository
     val settingsStore = (application as CampusApplication).settings
+    val contentProcessor = (application as CampusApplication).contentProcessor
+    val contentResults = repository.db.content().observe().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val data = MutableStateFlow(LocalData())
     val settings = MutableStateFlow(LocalSettings())
     val ready = MutableStateFlow(false)

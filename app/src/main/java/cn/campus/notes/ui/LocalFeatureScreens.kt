@@ -151,18 +151,28 @@ fun TrashDialog(onDismiss:()->Unit) {
 fun LocalRecordDialog(recordId:String,onDismiss:()->Unit) {
     val vm=LocalCampus.current;val data=LocalContent.current;val context=LocalContext.current
     val note=data.notes.find{it.id==recordId};val file=data.node(recordId)
+    val results by vm.contentResults.collectAsState()
+    var sourceRecord by rememberSaveable{mutableStateOf<String?>(null)}
+    var contentReview by rememberSaveable{mutableStateOf<String?>(null)}
     var edit by rememberSaveable{mutableStateOf(false)};var association by rememberSaveable{mutableStateOf(false)};var deleting by rememberSaveable{mutableStateOf(false)}
     EditorFrame(note?.title?:file?.title?:"记录已移除",onDismiss,footer={TextButton(onClick=onDismiss){Text("返回")}}){
         if(note!=null){Text(note.body);TextButton(onClick={edit=true}){Text("编辑")}}
-        if(file!=null){Text("${file.bytes} 字节 · 本地原件");TextButton(onClick={try{
+        results.find{it.outputNoteId==note?.id&&note!=null}?.let{result->
+            Text("来源原件：${data.node(result.sourceId)?.title?:"已移入回收站或不存在"}",style=MaterialTheme.typography.bodySmall)
+            if(data.node(result.sourceId)!=null)TextButton(onClick={sourceRecord=result.sourceId}){Text("查看来源与确认版本")}
+        }
+        if(file!=null){Text("${file.bytes} 字节 · ${if(file.kind==NodeKind.ORIGINAL)"本地原件" else "AI 成果"}");TextButton(onClick={try{
             val local=vm.repository.document(file.localName?:error("无本地副本"));check(local.isFile)
             val uri=FileProvider.getUriForFile(context,"${context.packageName}.documents",local)
             context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,file.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
         }catch(_:Exception){vm.error.value="无法打开文件，请确认本地副本存在且已安装对应查看应用"}}){Text("打开原件")}}
+        if(file!=null)ContentProcessingPanel(file){contentReview=it}
         if(note!=null||file!=null){TextButton(onClick={association=true}){Text("关联课程 / 归档主题")};TextButton(onClick={deleting=true}){Text("移入回收站")}}
     }
     if(edit&&note!=null)TextEditor("编辑记录",listOf("标题" to note.title,"正文" to note.body),{edit=false}){v->vm.act("记录已保存",{edit=false}){vm.repository.saveNote(note.copy(title=v[0],body=v[1]))}}
     if(association)RecordAssociation(recordId){association=false}
+    sourceRecord?.let{id->LocalRecordDialog(id){sourceRecord=null}}
+    contentReview?.let{id->results.find{it.id==id}?.let{result->key(id,result.updatedAt){ContentReviewDialog(result){contentReview=null}}}}
     if(deleting)DeleteConfirmation("记录","移入回收站后可以恢复。外部源文件不变。",{deleting=false}){
         vm.act("已移入回收站",onDismiss){if(note!=null)vm.repository.deleteNote(recordId)else vm.repository.deleteNode(recordId)}
     }

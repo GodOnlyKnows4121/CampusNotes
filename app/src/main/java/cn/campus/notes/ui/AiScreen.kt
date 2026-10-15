@@ -106,7 +106,7 @@ private fun ColumnScope.ChatPanel(compact: Boolean) {
         }
     }
     if(configOpen)ModelSettingsDialog{configOpen=false}
-    if(attachOpen)NotImplementedDialog("语音与附件","当前对话仅发送文字。音频、照片、Word/PPT/PDF 可先从首页或资料库导入原件；识别与附件对话将在后续阶段接入。"){attachOpen=false}
+    if(attachOpen)NotImplementedDialog("语音与附件","当前对话仅发送文字。音频、照片和文档可在首页采集或导入，再在原件详情中主动识别/解析并核对。附件对话仍待 AI 工作流阶段接入。"){attachOpen=false}
     if(strengthInfo)NotImplementedDialog("思考强度","当前服务尚未验证推理档位能力，因此使用模型默认设置，不伪造轻量/标准/深入参数。"){strengthInfo=false}
 }
 
@@ -128,7 +128,7 @@ private fun AgentPanel() {
     val originals = data.children(topic?.id).filter { it.kind == NodeKind.ORIGINAL }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("agent_panel"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("资料整理代理", style = MaterialTheme.typography.titleLarge)
-        Text("先支持 UTF-8 文本（TXT / Markdown / CSV / JSON）。图片、录音和 PDF 识别尚未接入。",
+        Text("可使用 UTF-8 原件，或先在原件详情中识别/解析并核对确认的文字。不会将未确认的音频、图片或文档视为已理解内容。",
             style = MaterialTheme.typography.bodySmall)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             topics.forEach { item ->

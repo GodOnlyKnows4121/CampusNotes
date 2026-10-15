@@ -77,7 +77,7 @@ class CampusFeaturesTest {
             raw.execSQL("INSERT INTO chat_messages (role,content,status,detail,createdAt) VALUES ('assistant','旧回答','complete','',1)")
             raw.execSQL("INSERT INTO nodes VALUES ('g',NULL,'group','旧组','旧规则',NULL,'text/plain',0,0)");raw.version=2
         }
-        val upgraded=Room.databaseBuilder(context,CampusDatabase::class.java,file.name).addMigrations(CampusDatabase.MIGRATION_2_3).build()
+        val upgraded=Room.databaseBuilder(context,CampusDatabase::class.java,file.name).addMigrations(CampusDatabase.MIGRATION_2_3,CampusDatabase.MIGRATION_3_4).build()
         try{assertEquals("保留正文",upgraded.dao().notes().single().body);assertEquals("旧回答",upgraded.dao().chat().single().content);assertEquals("旧规则",upgraded.dao().nodes().single().rule);assertTrue(upgraded.features().allTrash().isEmpty())}finally{upgraded.close()}
     }
 }

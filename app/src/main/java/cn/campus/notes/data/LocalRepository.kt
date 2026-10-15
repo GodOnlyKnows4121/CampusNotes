@@ -27,6 +27,7 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
     private val dao = db.dao()
     private val fileLock = Mutex()
     val documents = File(context.filesDir, "documents").apply { mkdirs() }
+    val captures = File(context.filesDir, "captures").apply { mkdirs() }
     val data = combine(dao.observeNotes(), dao.observeCourses(), dao.observeNodes(), ::LocalData)
 
     suspend fun saveNote(note: Note) {
@@ -126,7 +127,31 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
             }
         } catch (e: Exception) { temp.delete(); if (!committed) target.delete(); throw e }
     }
-    suspend fun storageBytes(): Long = withContext(Dispatchers.IO) { documents.listFiles()?.sumOf { it.length() } ?: 0L }
+    suspend fun storageBytes(): Long = withContext(Dispatchers.IO) {
+        documents.listFiles().orEmpty().sumOf { it.length() } + captures.listFiles().orEmpty().sumOf { it.length() }
+    }
+    /** Only a camera/recorder file created by this app can be adopted. Never accepts model paths. */
+    suspend fun saveCapture(name: String, title: String, mime: String): String = withContext(Dispatchers.IO) { fileLock.withLock {
+        require(Regex("[a-f0-9-]{36}\\.(m4a|jpg)").matches(name)) { "无效的采集文件引用" }
+        val source = File(captures, name)
+        require(source.canonicalFile.parentFile == captures.canonicalFile && source.isFile && source.length() > 0) { "未取得有效采集内容，临时文件保留" }
+        val id = newId(); val target = document(id); val bytes = source.length()
+        val topic = inboxTopic()
+        val node = LibraryNode(parentId = topic, kind = NodeKind.ORIGINAL, title = title, localName = id, mime = mime, bytes = bytes)
+        withContext(NonCancellable) {
+            check(source.renameTo(target)) { "无法保存采集原件，临时文件保留" }
+            try { saveNode(node) } catch(e: Exception) { check(target.renameTo(source)) { "原件保存在本地副本中，暂未关联记录" }; throw e }
+        }
+        node.id
+    } }
+    fun sourceStamp(node: LibraryNode): String {
+        val file = document(node.localName ?: error("本地原件缺失"))
+        require(file.isFile) { "本地原件缺失" }
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(node.id.toByteArray()); digest.update(node.localName.toByteArray())
+        file.inputStream().use { input -> val buffer = ByteArray(65536); while(true) { val n = input.read(buffer); if(n < 0) break; digest.update(buffer,0,n) } }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
     suspend fun cleanOrphans(): Int = withContext(Dispatchers.IO) { fileLock.withLock {
         val retained = (dao.nodes() + db.features().allTrash().flatMap { it.nodes() }).mapNotNull { it.localName }.toSet()
         val orphaned = documents.listFiles().orEmpty().filter { it.name !in retained }
@@ -150,13 +175,17 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         hash(topic.id); hash(topic.title); hash(subject.title); hash(group.id); hash(group.title); hash(group.rule)
         val text = StringBuilder()
         originals.forEach { node ->
-            require(node.mime in setOf("text/plain", "text/markdown", "text/csv", "application/json") ||
-                node.title.substringAfterLast('.', "").lowercase() in setOf("txt", "md", "csv", "json")) {
-                "本轮代理只读取 UTF-8 文本；图片、录音和 PDF 须先识别为文本"
-            }
+            val confirmed = db.content().forSource(node.id).firstOrNull { it.status == "confirmed" }
+            val plain = node.mime in setOf("text/plain", "text/markdown", "text/csv", "application/json") ||
+                node.title.substringAfterLast('.', "").lowercase() in setOf("txt", "md", "csv", "json")
+            require(plain || confirmed != null) { "请先对图片、音频和文档主动识别/解析，并核对确认文字；未确认内容不会发给 AI" }
             val file = document(node.localName ?: error("原件本地副本缺失"))
             require(file.canonicalFile.parentFile == documents.canonicalFile && file.isFile) { "原件本地副本缺失或地址无效" }
-            val bytes = file.inputStream().use { input ->
+            val bytes = if (confirmed != null) {
+                require(sourceStamp(node) == confirmed.sourceStamp) { "原件已改变，请重新识别或解析并确认文字" }
+                hash(confirmed.id); hash(confirmed.updatedAt.toString()); hash(confirmed.sourceStamp)
+                confirmed.text.toByteArray(Charsets.UTF_8)
+            } else file.inputStream().use { input ->
                 val buffer = ByteArray(64_001); var count = 0
                 while (count < buffer.size) { val n = input.read(buffer, count, buffer.size - count); if (n < 0) break; count += n }
                 buffer.copyOf(count)
@@ -298,10 +327,15 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
     suspend fun purgeTrash(id: String) = withContext(Dispatchers.IO) { fileLock.withLock {
         val item=db.features().allTrash().find { it.id==id } ?: return@withLock
         val names=item.nodes().mapNotNull { it.localName }
-        db.features().deleteTrash(id)
+        db.withTransaction {
+            db.features().deleteTrash(id)
+            val retainedIds=(dao.nodes()+db.features().allTrash().flatMap { it.nodes() }).map { it.id }.toSet()
+            db.content().deleteSources(item.nodes().map { it.id }.filter { it !in retainedIds })
+        }
         val retained=(dao.nodes()+db.features().allTrash().flatMap { it.nodes() }).mapNotNull { it.localName }.toSet()
         names.filter { it !in retained }.forEach { name -> val f=document(name); check(!f.exists()||f.delete()) { "部分副本清理失败，请稍后清理未关联副本" } }
     } }
+    suspend fun retainsSource(id: String): Boolean = dao.nodes().any { it.id == id } || db.features().allTrash().any { item -> item.nodes().any { it.id == id } }
     suspend fun inboxTopic(): String = db.withTransaction {
         if(dao.nodes().none { it.id=="inbox" }) dao.save(LibraryNode("inbox",kind=NodeKind.GROUP,title="待整理收件箱"))
         if(dao.nodes().none { it.id=="inbox-subject" }) dao.save(LibraryNode("inbox-subject","inbox",NodeKind.SUBJECT,"未分类"))

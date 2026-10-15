@@ -19,9 +19,16 @@ import java.time.*
 
 @Composable
 fun HomeScreen(onNavigate:(Destination)->Unit) {
-    val vm=LocalCampus.current;val data=LocalContent.current;val semesters by vm.semesters.collectAsState();val placements by vm.placements.collectAsState();val settings by vm.settings.collectAsState()
+    val vm=LocalCampus.current;val data=LocalContent.current;val semesters by vm.semesters.collectAsState();val placements by vm.placements.collectAsState();val settings by vm.settings.collectAsState();val contentResults by vm.contentResults.collectAsState()
+    val captureAction=rememberCaptureActions()
+    var originalTimes by remember{mutableStateOf<Map<String,Long>>(emptyMap())}
+    LaunchedEffect(data.nodes){originalTimes=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+        data.nodes.filter{it.kind==NodeKind.ORIGINAL&&it.localName!=null}.associate{it.id to vm.repository.document(it.localName!!).lastModified()}
+    }}
+    val recentRecords=(data.notes.map{RecentRecord(it.id,it.title,"文字记录",it.updatedAt)}+
+        data.nodes.filter{it.kind==NodeKind.ORIGINAL}.map{RecentRecord(it.id,it.title,"原始资料",originalTimes[it.id]?:0L)}).sortedByDescending{it.at}
     var campus by rememberSaveable{mutableStateOf(false)};var records by rememberSaveable{mutableStateOf(false)};var inbox by rememberSaveable{mutableStateOf(false)}
-    var query by rememberSaveable{mutableStateOf("")};var search by rememberSaveable{mutableStateOf(false)};var unavailable by rememberSaveable{mutableStateOf<String?>(null)};var recordId by rememberSaveable{mutableStateOf<String?>(null)};var allRecent by rememberSaveable{mutableStateOf(false)}
+    var query by rememberSaveable{mutableStateOf("")};var search by rememberSaveable{mutableStateOf(false)};var recordId by rememberSaveable{mutableStateOf<String?>(null)};var allRecent by rememberSaveable{mutableStateOf(false)}
     val importer=rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->if(uris.isNotEmpty()){
         var summary="";vm.act(onDone={vm.message.value=summary}){val topic=vm.repository.inboxTopic();summary=vm.repository.importDocuments(topic,uris)}
     }}
@@ -53,7 +60,7 @@ fun HomeScreen(onNavigate:(Destination)->Unit) {
         @Composable fun Quick(modifier:Modifier){Column(modifier,verticalArrangement=Arrangement.spacedBy(5.dp)){
             Text("快速记录",fontWeight=FontWeight.Bold,style=if(dense)MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleLarge)
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("录音","拍照","文字","导入").forEach{label->
-                Surface(onClick={when(label){"文字"->records=true;"导入"->importer.launch(arrayOf("*/*"));else->unavailable=label}},
+                Surface(onClick={when(label){"文字"->records=true;"导入"->importer.launch(arrayOf("*/*"));else->captureAction(label)}},
                     modifier=Modifier.weight(1f).height(if(dense)44.dp else 66.dp).then(if(label=="文字")Modifier.testTag("capture")else Modifier),
                     shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surfaceContainerLow){
                     Column(Modifier.padding(4.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
@@ -65,7 +72,7 @@ fun HomeScreen(onNavigate:(Destination)->Unit) {
         }}
         @Composable fun Recent(modifier:Modifier){Column(modifier,verticalArrangement=Arrangement.spacedBy(5.dp)){
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text("最近记录",style=if(dense)MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);TextButton(onClick={allRecent=true},contentPadding=PaddingValues(0.dp),modifier=Modifier.heightIn(min=24.dp)){Text("查看全部 ›",style=MaterialTheme.typography.labelSmall)}}
-            val recent=(data.notes.take(2).map{Triple(it.id,it.title,"文字记录")}+data.nodes.filter{it.kind==NodeKind.ORIGINAL}.takeLast(2).map{Triple(it.id,it.title,"原始资料")}).take(2)
+            val recent=recentRecords.take(2)
             if(recent.isEmpty())Text("还没有记录，从快速记录开始。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary)
             recent.forEach{(id,title,meta)->OutlinedCard(onClick={recordId=id},modifier=Modifier.fillMaxWidth().weight(1f),shape=RoundedCornerShape(16.dp)){
                 Column(Modifier.fillMaxSize().padding(horizontal=12.dp,vertical=if(dense)3.dp else 8.dp),verticalArrangement=Arrangement.Center){Text(title,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis);if(!dense)Text(meta,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary)}
@@ -80,14 +87,16 @@ fun HomeScreen(onNavigate:(Destination)->Unit) {
     }
     if(records)RecordsDialog{records=false};if(inbox)InboxDialog{inbox=false};recordId?.let{id->LocalRecordDialog(id){recordId=null}}
     if(allRecent)EditorFrame("全部记录",{allRecent=false},footer={TextButton(onClick={allRecent=false}){Text("返回")};TextButton(onClick={allRecent=false;inbox=true}){Text("待整理收件箱")}}){
-        (data.notes.map{it.id to it.title}+data.nodes.filter{it.kind==NodeKind.ORIGINAL}.map{it.id to it.title}).forEach{(id,title)->TextButton(onClick={allRecent=false;recordId=id}){Text(title)}}
+        recentRecords.forEach{(id,title)->TextButton(onClick={allRecent=false;recordId=id}){Text(title)}}
     }
-    unavailable?.let{label->NotImplementedDialog(label,"${label}将在记录与识别阶段接入；当前可以导入音频、照片或文档原件。"){unavailable=null}}
     if(search)EditorFrame("搜索本地资料",{search=false},footer={TextButton(onClick={search=false}){Text("返回")}}){
         val text=query.trim();if(text.isBlank())Text("请先输入关键词")else{
             data.courses.filter{it.title.contains(text,true)}.forEach{c->TextButton(onClick={search=false;vm.scheduleFocus.value=c.id;onNavigate(Destination.SCHEDULE)}){Text("课程 · ${c.title}")}}
             data.notes.filter{it.title.contains(text,true)||it.body.contains(text,true)}.forEach{n->TextButton(onClick={search=false;recordId=n.id}){Text("记录 · ${n.title}")}}
             data.nodes.filter{it.localName!=null&&it.title.contains(text,true)}.forEach{f->TextButton(onClick={search=false;recordId=f.id}){Text("资料 · ${f.title}")}}
+            contentResults.filter{it.status=="confirmed"}.distinctBy{it.sourceId}.filter{it.text.contains(text,true)&&data.nodes.any{n->n.id==it.sourceId}}.forEach{r->TextButton(onClick={search=false;recordId=r.sourceId}){Text("已确认文字 · ${data.node(r.sourceId)?.title}")}}
         }
     }
 }
+
+private data class RecentRecord(val id:String,val title:String,val meta:String,val at:Long)

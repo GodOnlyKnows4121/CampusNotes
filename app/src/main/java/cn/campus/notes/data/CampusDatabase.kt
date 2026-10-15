@@ -73,11 +73,18 @@ interface CampusDao {
 }
 
 @Database(entities = [Note::class, LocalCourse::class, LibraryNode::class, ChatMessage::class, OrganizeTask::class,
-    Semester::class, CoursePlacement::class, CampusTodo::class, RecordLink::class, TrashEntry::class], version = 3, exportSchema = true)
+    Semester::class, CoursePlacement::class, CampusTodo::class, RecordLink::class, TrashEntry::class, ContentResult::class], version = 4, exportSchema = true)
 abstract class CampusDatabase : RoomDatabase() {
     abstract fun dao(): CampusDao
     abstract fun features(): FeatureDao
+    abstract fun content(): ContentDao
     companion object {
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS content_results (id TEXT NOT NULL PRIMARY KEY, sourceId TEXT NOT NULL, sourceStamp TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, text TEXT NOT NULL, detail TEXT NOT NULL, provider TEXT NOT NULL, outputNoteId TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_content_results_sourceId ON content_results (sourceId)")
+            }
+        }
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS semesters (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, startDate TEXT NOT NULL, weeks INTEGER NOT NULL, periods TEXT NOT NULL)")

@@ -1,16 +1,16 @@
 # 校园记录与 AI 助手
 
-Android 0.4.1，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。本轮在原有 DeepSeek 能力上完成深色五页与本地结构迭代，并修复真机状态栏图标对比度。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
+Android 0.5.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿用深色五页与本地结构，新增采集、文档提取和主动识别后的核对流程。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
 
 ## 已实现的本地功能
 
 | 页面 | 当前可操作内容 |
 | --- | --- |
-| 首页 V2.1.10 | 固定一屏、校园卡片、四种入口、最近记录、本地搜索、独立校园页与作业待办；录音/拍照待接入 |
+| 首页 V2.1.10 | 固定一屏、校园卡片、录音/系统拍照/文字/导入入口、最近记录、本地搜索、独立校园页与作业待办 |
 | 日程 | 多学期、自定义节次、跨节与单双/指定周、冲突校验；格子原地放大，月历选教学周 |
 | AI | DeepSeek 流式对话、停止、错误提示、本机对话历史、回答另存记录；文本整理计划、预览确认、独立成果与执行日志 |
 | 资料库 V1.5 | 两列文件夹、多大组独立规则/模式、主题/原件/成果；系统多文件导入、打开、重命名、回收站、收件箱与课程关联 |
-| 更多 V1.0 | 独立模型设置、Keystore 密钥、沙箱授权、本地占用与回收站恢复、未关联清理；复习与备份待接入 |
+| 更多 V1.0 | 独立模型设置、Keystore 密钥、沙箱授权、本地占用、回收站和采集恢复、未关联清理；复习与备份待接入 |
 
 首次启动为空库。在“更多”可主动载入示例课表与资料结构，示例带标记，不产生虚构文件。编辑示例条目后保存为个人条目。只有数据库或文件操作成功才提示已保存。
 
@@ -18,9 +18,18 @@ Android 0.4.1，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。本�
 
 ## 数据与文件边界
 
-- Room 保存文字记录、课程、资料层级与新增学期/安排/待办/关联/回收站，schema 位于 `app/schemas`。大组规则独立保存。原件和成果使用不同节点类型，文本代理可新建成果。
+- Room 保存文字记录、课程、资料层级、学期/安排/待办/关联/回收站，以及识别任务与核对文字。schema 4 经 3→4 非破坏迁移增加结果表，不改变已有数据。大组规则独立保存，原件和成果使用不同节点类型。
 - DataStore 保存地址、模型名、沙箱偏好及密钥密文。密钥使用 Android Keystore 的 AES-256-GCM 加密，并绑定服务类型；不回显，不进入日志或 Activity 保存状态。输入中的新密钥旋转后清空，已保存密钥保留。
 - 文件通过系统 `OpenDocument` 选择，仅复制用户授权的内容到 App 私有 `files/documents`。单文件上限 100 MB；失败会回滚未完成副本。导入后不依赖外部 URI 的长期授权。
+
+## 采集、识别与文档提取
+
+- 首页录音申请麦克风权限后，使用 microphone 类型前台服务与常驻通知，提供暂停、继续、结束并保存。单次上限 6 小时或 512 MB；停止失败或进程中断留下的文件在“更多 → 本地存储 → 采集恢复”中主动保存或确认丢弃。真实麦克风与锁屏持续录音尚未真机验收。
+- 拍照调用系统相机，原件直接写入本应用私有临时目录，确认后归入收件箱；取消不上传，也不伪造拍照成功。没有请求广泛存储或本应用相机权限。本轮按用户选择未执行真实拍照验收。
+- 原件详情提供本机文字提取：UTF-8/带 BOM 的 UTF-16 文本、DOCX、PPTX、可读 PDF。上限 20 MB、60000 字；PDF 上限 200 页。旧版 DOC/PPT、加密或损坏文档、扫描 PDF、表格/公式的精确版式保真不在当前解析能力内；可保存和外部打开，扫描页需另存图片后 OCR。不会以空文字表示解析成功。
+- ASR 与 OCR 分别使用已保存的服务地址、模型和密钥。兼容 Chat Completions 的 `input_audio` / `image_url` 请求适配已实现；仅在原件详情预览上传内容并确认后发送，可能计费。模型别名（如仅写 `qwen`）和代理平台能力必须以实际服务为准，本轮未做真实在线调用验收。
+- AAC/M4A（含本应用录音）在本机无损封装为每段最多 3 分钟、约 5 MB，按顺序转写；其他音频本轮限 3 分钟、7 MB。图片限 7 MB。长录音可能触发多次请求，支持取消；失败、中断的部分文字保留但不能当作完整结果确认，也不会自动重发。
+- 完整处理结果先进入“待核对”，用户可修改并确认。有效版本可用于首页搜索、有限文本整理及另存文字记录；另存记录可查看来源。重新确认后使旧整理计划失效。原件不覆盖，回收站保留识别结果，永久删除原件时同时移除其识别文本，迟到任务不能重新写回。
 - 重命名改变本地显示名称；删除大组/学科/主题会在确认后将其下级树移入回收站并保留副本。恢复先校验父级与冲突，永久删除才移除不再引用的本地副本。外部源文件不变。
 - 打开文件时使用范围限定的 FileProvider，仅向用户选定的查看应用临时授予读取权限。没有对应查看应用时显示错误。
 - 本地清理保留资料库和回收站全部引用，只移除未关联残留。备份恢复与云同步尚未实现；卸载应用会丢失本地内容，系统自动备份已关闭。
@@ -33,18 +42,18 @@ Android 0.4.1，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。本�
 
 1. 在“更多 → 模型配置”保存 DeepSeek API 地址、模型名与密钥。地址接受 HTTPS 基址（如 `https://api.deepseek.com`）或完整 `/chat/completions` 地址；预填模型为 `deepseek-flash`，以服务商实际可用名称为准。保存设置不调用网络。
 2. 在“AI → 对话”输入并主动发送。请求发送问题和最近完整对话到配置的服务；不会自动读取资料库。支持停止，取消不保证服务商退回已产生的用量。
-3. 在资料库导入 UTF-8 文本原件（TXT / Markdown / CSV / JSON），在“AI → 代理”选择主题并查看所属大组规则与原件列表。点击“发送原件并生成整理计划”会上传该主题文本和规则；最多 10 份，每份 64 KB，合计 48000 字。不读取图片、录音、PDF 或其他二进制文件。
+3. 在资料库导入 UTF-8 文本原件（TXT / Markdown / CSV / JSON），或先对音频、照片、文档主动处理并核对确认文字。在“AI → 代理”选择主题并查看所属大组规则与原件列表。点击生成会上传该主题的可用文本和规则；最多 10 份，每份 64 KB，合计 48000 字。二进制原件不会被当作文字发送，缺少确认结果时拒绝整理。
 4. 未开启沙箱自动整理时，查看操作预览并确认写入；开启时自动执行有效计划。成果与原件分开存放，执行前再次校验原件和规则。来源改变、非法计划或重复执行均被拒绝；任务日志显示真实状态。
 
 HTTPS 请求保留证书验证，不跟随跳转，不自动重试；401/403、余额不足、限流、服务器错误、超时和不完整流均给出提示。服务端原始错误正文不回显，以免泄露密钥或敏感内容。只有正常结束的文字回复标记成功。
 
-本轮已用本地 HTTPS 模拟服务验证传输协议；尚未输入真实 DeepSeek 密钥做在线调用验收。ASR 是语音转文字，OCR 是图片转文字；两者独立配置，当前只有设置和接口契约，尚无识别入口。AI 检索栏也仍标注尚未接入。
+本轮使用本地 HTTPS 模拟服务验证识别与对话传输协议，并在真机验证本地流程和已有密钥可解密；未调用真实 DeepSeek/ASR/OCR 服务。AI 资料检索、独立多会话和附件对话仍待阶段三实现。
 
 原对话助手内容只能取得引用标记，因此页面版本表示本次需求约束，不声称精确复刻旧原型。
 
 ## 构建与运行
 
-固定版本：Gradle 8.14.3、AGP 8.13.0、Kotlin/Compose compiler/kapt 2.2.20、Compose BOM 2025.09.01、Room 2.8.4、DataStore 1.2.1、OkHttp 4.12.0。compile/target SDK 36，Java 编译目标 17，本机 JDK 21。
+固定版本：Gradle 8.14.3、AGP 8.13.0、Kotlin/Compose compiler/kapt 2.2.20、Compose BOM 2025.09.01、Room 2.8.4、DataStore 1.2.1、OkHttp 4.12.0、PdfBox-Android 2.0.27.0。compile/target SDK 36，Java 编译目标 17，本机 JDK 21。
 
 1. 使用 Android Studio 打开此目录，安装 SDK Platform 36、Build Tools 35.0.0。
 2. 生成本机 `local.properties`；不要提交此文件。本机 SDK 在 `work/android-sdk`。
@@ -67,8 +76,8 @@ APK 默认在 `app/build/outputs/apk/debug/app-debug.apk`，本机交付副本�
 
 ## 代码与后续
 
-`data` 负责 Room、设置、密钥和本地副本；`ui` 负责五页、编辑和 ViewModel；`domain` 包含示例和写入策略；`integration` 包含 DeepSeek HTTPS/SSE、对话与整理服务，以及待接入的独立 ASR/OCR 契约。
+`data` 负责 Room、设置、密钥和本地副本；`ui` 负责五页、编辑和 ViewModel；`domain` 包含示例和写入策略；`integration` 包含 DeepSeek HTTPS/SSE、对话与整理、前台录音、文档解析、独立 ASR/OCR 请求适配、AAC 分段及内容任务流程。
 
-后续阶段三迭代将确定并接入 ASR/OCR 服务，实现识别结果确认与保存，随后接入 AI 检索并扩展整理类型。沙箱外敏感修改执行器尚未提供，未来接入时须逐次预览确认。Manifest 仅增加联网权限，没有麦克风、相机或广泛存储权限。每轮验证后提交并推送 GitHub，具体约定见 `AGENTS.md`。
+后续阶段三继续独立会话、多模型与真实思考档位、附件对话、引用检索及复习；阶段四实现提醒、备份恢复和分类存储。沙箱外敏感修改执行器尚未提供。新增麦克风、前台录音服务、通知及录音唤醒权限，均用于明确的录音流程；没有广泛存储权限。每轮验证后提交并推送 GitHub，具体约定见 `AGENTS.md`，本轮证据见 `VALIDATION_CONTENT.md`。
 
 参考官方文档：[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、[DeepSeek 错误码](https://api-docs.deepseek.com/quick_start/error_codes/)、[Room](https://developer.android.com/jetpack/androidx/releases/room)、[DataStore](https://developer.android.com/jetpack/androidx/releases/datastore)、[系统文档选择器](https://developer.android.com/training/data-storage/shared/documents-files)、[Android 密码学](https://developer.android.com/privacy-and-security/cryptography)。

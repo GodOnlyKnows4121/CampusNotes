@@ -144,6 +144,7 @@ fun LibraryScreen() {
                                     TextButton(onClick = { fileDetails = file.id }) { Text("关联") }
                                     TextButton(onClick = { deleting = file.id }) { Text("删除") }
                                 }
+                                if(file.kind==NodeKind.ORIGINAL)TextButton(onClick={fileDetails=file.id}){Text("识别 / 提取 / 核对文字")}
                             }
                         }
                     }

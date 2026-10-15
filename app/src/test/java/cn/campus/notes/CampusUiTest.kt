@@ -75,6 +75,18 @@ class CampusUiTest {
         screenshot("more-small")
     }
 
+    @Test fun newlySavedOriginalAppearsAheadOfOlderTextNotes() {
+        val app=compose.activity.application as CampusApplication
+        runBlocking {
+            app.database.dao().notes().forEach{app.database.dao().save(it.copy(updatedAt=1))}
+            app.repository.importStream(app.repository.inboxTopic(),"最新采集原件.txt","text/plain",java.io.ByteArrayInputStream("合成内容".toByteArray()))
+        }
+        compose.setContent { CampusApp() };awaitHome()
+        compose.waitUntil(10_000){compose.onAllNodesWithText("最新采集原件.txt").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithText("最新采集原件.txt").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("extract_text").performScrollTo().assertIsDisplayed()
+    }
+
     @Test fun groupRulesAndLibraryHierarchyAreIndependent() {
         compose.setContent { CampusApp() }
         awaitHome()

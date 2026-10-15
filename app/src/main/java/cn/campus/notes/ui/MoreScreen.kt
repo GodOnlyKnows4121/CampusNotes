@@ -25,6 +25,7 @@ fun MoreScreen() {
     var clean by rememberSaveable { mutableStateOf(false) }
     var trash by rememberSaveable { mutableStateOf(false) }
     var inbox by rememberSaveable { mutableStateOf(false) }
+    var recovery by rememberSaveable { mutableStateOf(false) }
     var storageRead by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.storageBytes.value = vm.repository.storageBytes();storageRead=true }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).testTag("more_screen"),
@@ -35,7 +36,7 @@ fun MoreScreen() {
         Text("学习与工具",style=MaterialTheme.typography.titleLarge)
         listOf(
             Triple("review", "复习", "要点、提纲、自测与错题 · 待接入"),
-            Triple("models", "模型配置", "DeepSeek 已接入；ASR、OCR 分别保存配置，识别尚未接入"),
+            Triple("models", "模型配置", "DeepSeek 对话；ASR、OCR 独立配置并主动调用"),
             Triple("permissions", "沙箱权限", "授权按大组规则自动新建整理成果；原件保留"),
             Triple("storage", "本地存储", "原件、成果、回收站与未关联副本")
         ).forEach { (key,title,description) -> Box(Modifier.testTag("more_$key")) {
@@ -45,7 +46,7 @@ fun MoreScreen() {
             OutlinedButton(onClick = { vm.act("示例已载入，示例条目均带标注") { vm.repository.loadExamples() } },
                 enabled = !busy, modifier = Modifier.testTag("load_examples")) { Text("载入示例课表与资料结构") }
         }
-        Text("0.4.0 · 本地优先\n记录、学期与待办保存在本机；识别、复习与备份仍待后续阶段接入。卸载应用会删除本地数据。",
+        Text("0.5.0 · 本地优先\n录音、照片及导入原件保存在本机；识别主动发起，文字需核对确认。复习与备份尚未实现。卸载应用会删除本地数据。",
             style = MaterialTheme.typography.bodySmall)
     }
     when (selected) {
@@ -53,7 +54,7 @@ fun MoreScreen() {
         "models" -> ModelSettingsDialog { selected = null }
         "permissions" -> AlertDialog(onDismissRequest = { selected = null }, title = { Text("沙箱权限") },
             text = { Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("开启后，点击生成整理计划会按所选主题所属大组的规则，自动在 App 私有目录中新建一份 AI 成果。关闭时必须先查看预览并确认写入。当前只支持 UTF-8 文本原件。")
+                Text("开启后，点击生成整理计划会按所选主题所属大组的规则，自动在 App 私有目录中新建一份 AI 成果。关闭时必须先查看预览并确认写入。可使用 UTF-8 文本或已核对确认的识别/解析文字。")
                 Row { Text("允许沙箱内整理", Modifier.weight(1f).padding(top = 12.dp))
                     Switch(settings.sandboxEnabled, { enabled -> vm.act { vm.settingsStore.sandbox(enabled) } }, enabled = !busy) }
                 Text("生成计划会上传所选原件文本与规则到配置的 DeepSeek 服务。执行仅新建成果，不删除、覆盖或移动原件。沙箱外修改暂不提供执行入口；未来接入时必须逐次确认。")
@@ -62,6 +63,7 @@ fun MoreScreen() {
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if(storageRead) "文件副本（含回收站）：${"%.2f".format(bytes / 1024.0 / 1024.0)} MB\n文字记录：${data.notes.size} 条\n课程：${data.courses.size} 门\n资料条目：${data.nodes.size} 项" else "正在读取本地占用…")
                 OutlinedButton(onClick={inbox=true}){Text("待整理收件箱")}
+                OutlinedButton(onClick={recovery=true}){Text("采集恢复")}
                 OutlinedButton(onClick={trash=true}){Text("回收站 / 恢复")}
                 Text("清理保留资料库及回收站中的全部副本，只删除未关联残留。永久删除请在回收站逐项确认。")
                 OutlinedButton(onClick = { clean = true }, enabled = !busy) { Text("清理未关联副本") }
@@ -70,6 +72,7 @@ fun MoreScreen() {
     }
     if(trash)TrashDialog{trash=false}
     if(inbox)InboxDialog{inbox=false}
+    if(recovery)CaptureRecoveryDialog{recovery=false}
     if (clean) DeleteConfirmation("未关联副本", "仅清理本应用内没有资料条目引用的文件，不能恢复。", { clean = false }) {
         vm.act("未关联副本清理完成", { clean = false }) { vm.repository.cleanOrphans() }
     }
@@ -101,7 +104,8 @@ fun ModelSettingsDialog(onDismiss: () -> Unit) {
                     ProviderKind.entries.forEach { item -> FilterChip(kind == item, { provider = item.name },
                         label = { Text(item.label) }, enabled = !busy) }
                 }
-                Text("各服务独立保存；切换服务前请先保存。保存配置不调用网络；DeepSeek 在主动发送或生成计划时调用，ASR/OCR 识别尚未接入。")
+                Text("各服务独立保存；切换服务前请先保存。保存配置不调用网络；对话、整理及 ASR/OCR 均由用户主动发起，识别需在原件详情中确认上传。")
+                if (kind != ProviderKind.DEEPSEEK) Text("识别适配兼容 Chat Completions：ASR 使用 input_audio，OCR 使用 image_url。请填写服务实际支持的完整模型名；不会自动替换配置或保证别名可用。")
                 if (kind == ProviderKind.DEEPSEEK) Text("地址可填写 API 基址或完整 /chat/completions 地址。模型以服务商当前可用名称为准；请求不会自动重试。")
                 OutlinedTextField(endpoint, { endpoint = it }, label = { Text("HTTPS API 地址") }, singleLine = true, enabled = !busy, modifier = Modifier.testTag("model_endpoint"))
                 OutlinedTextField(model, { model = it }, label = { Text("模型 / 服务名称") }, singleLine = true, enabled = !busy, modifier = Modifier.testTag("model_name"))
