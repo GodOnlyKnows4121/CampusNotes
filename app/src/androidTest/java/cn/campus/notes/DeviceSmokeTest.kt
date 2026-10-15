@@ -15,16 +15,23 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.After
 
-/** Reuses personal data without modifying it. Examples are loaded only into a completely empty app. */
+/** Reuses personal data without modifying it; never inserts examples into the user's database. */
 @RunWith(AndroidJUnit4::class)
 class DeviceSmokeTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation get() = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
     private lateinit var activity: MainActivity
     private lateinit var data: LocalData
-    @Before fun readOrSeedEmptyDatabase() {
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n cn.campus.notes/.MainActivity").use { descriptor ->
+    @Before fun readExistingDatabase() {
+        instrumentation.uiAutomation.executeShellCommand(
+            "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n cn.campus.notes/.MainActivity"
+        ).use { descriptor ->
             android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+        }
+        compose.waitUntil(15_000) {
+            var resumed = false
+            instrumentation.runOnMainSync { resumed = resumedActivity() != null }
+            resumed
         }
         instrumentation.runOnMainSync {
             activity = resumedActivity() ?: error("Application did not reach the foreground")
@@ -32,10 +39,6 @@ class DeviceSmokeTest {
         }
         val repo = (activity.application as CampusApplication).repository
         data = runBlocking { repo.data.first() }
-        if (data.notes.isEmpty() && data.courses.isEmpty() && data.nodes.isEmpty()) {
-            runBlocking { repo.loadExamples() }
-            data = runBlocking { repo.data.first() }
-        }
         val vm = ViewModelProvider(activity)[CampusViewModel::class.java]
         compose.waitUntil(15_000) { vm.ready.value && vm.settingsReady.value && vm.data.value == data }
         compose.onNodeWithTag("home_screen").assertIsDisplayed()
@@ -58,16 +61,30 @@ class DeviceSmokeTest {
             next?.takeIf { it !== previous }?.also { activity = it } != null
         }
         compose.onNodeWithTag("ai_draft").assertTextContains("课堂问题")
+        compose.onNodeWithTag("ai_draft").performTextClearance()
         instrumentation.runOnMainSync { activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("home_screen").assertIsDisplayed()
     }
 
     @Test fun existingCourseOpensAnchoredPopup() {
         assumeTrue("No course available; existing personal data is left unchanged", data.courses.isNotEmpty())
-        val course = data.courses.minBy { it.firstWeek }
+        val app = activity.application as CampusApplication
+        val (activeSemester, placements) = runBlocking {
+            app.settings.data.first().activeSemester to app.database.features().allPlacements()
+        }
+        val course = data.courses.filter { candidate ->
+            (placements.find { it.courseId == candidate.id }?.semesterId) == activeSemester
+        }.minByOrNull { it.firstWeek }
+        assumeTrue("No course in the active semester; saved semester is left unchanged", course != null)
+        val selected = course!!
+        instrumentation.runOnMainSync {
+            ViewModelProvider(activity)[CampusViewModel::class.java].scheduleFocus.value = selected.id
+        }
         compose.onNodeWithTag("nav_SCHEDULE").performClick()
-        repeat(course.firstWeek - 1) { compose.onNodeWithText("下一周").performClick() }
-        compose.onNodeWithTag("course_${course.id}").performScrollTo().performClick()
+        compose.onNodeWithText("收起详情").performScrollTo().performClick()
+        compose.onNodeWithTag("course_${selected.id}").performClick()
+        compose.onNodeWithTag("course_details").assertIsDisplayed()
+        compose.onNodeWithTag("course_details").performClick()
         compose.onNodeWithTag("course_details").assertIsDisplayed()
         compose.onNodeWithText("收起详情").performScrollTo().performClick()
         compose.onNodeWithTag("course_details").assertDoesNotExist()
@@ -82,10 +99,11 @@ class DeviceSmokeTest {
         compose.onNodeWithTag("ai_chat").performClick()
         compose.onNodeWithTag("ai_draft").assertTextContains("真机临时草稿")
         compose.onNodeWithTag("ai_send").assertIsDisplayed()
+        compose.onNodeWithTag("ai_draft").performTextClearance()
     }
 
     @Test fun existingLibraryHierarchyAndBackWork() {
-        val topic = data.nodes.firstOrNull { it.kind == NodeKind.TOPIC }
+        val topic = data.nodes.firstOrNull { it.kind == NodeKind.TOPIC && it.id != "inbox-topic" }
         assumeTrue("No topic available; existing personal data is left unchanged", topic != null)
         val subject = data.node(topic!!.parentId)!!
         val group = data.node(subject.parentId)!!

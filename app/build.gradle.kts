@@ -11,8 +11,8 @@ android {
         applicationId = "cn.campus.notes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0-campus"
+        versionCode = 5
+        versionName = "0.4.1-campus"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }

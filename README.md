@@ -1,6 +1,6 @@
 # 校园记录与 AI 助手
 
-Android 0.4.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。本轮在原有 DeepSeek 能力上完成深色五页与本地结构迭代。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
+Android 0.4.1，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。本轮在原有 DeepSeek 能力上完成深色五页与本地结构迭代，并修复真机状态栏图标对比度。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
 
 ## 已实现的本地功能
 
@@ -63,7 +63,7 @@ APK 默认在 `app/build/outputs/apk/debug/app-debug.apk`，本机交付副本�
 .\gradlew.bat :app:connectedDebugAndroidTest
 ```
 
-设备冒烟测试使用现有资料，只有空数据库才载入标注示例，不清理个人资料。课程或主题缺失时对应用例显式跳过。Keystore 测试只使用测试字符串；AI 本地设备测试使用独立数据库、合成回复与单独清理的 UUID 文件，不调用模型。阶段二记录见 `VALIDATION.md`，本轮记录见 `VALIDATION_PHASE3.md`。
+设备冒烟测试只使用现有资料，不向空库自动插入示例。当前学期没有课程或资料库没有主题时，对应用例显式跳过。Keystore 测试验证测试字符串和已配置密钥可解密，不回显密钥或修改配置；AI 本地设备测试使用独立数据库、合成回复与单独清理的 UUID 文件，不调用模型。测试直接启动主应用并等待前台生命周期，避开部分厂商系统对测试包启动页的拦截。0.4.0/0.4.1 真机升级与本轮验证见 `VALIDATION_UI_LOCAL.md`，历史记录保留在 `VALIDATION.md` 和 `VALIDATION_PHASE3.md`。
 
 ## 代码与后续
 
