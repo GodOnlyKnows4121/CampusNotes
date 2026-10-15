@@ -104,4 +104,26 @@ class RecognitionProtocolTest {
         }
         assertEquals(1,server.requestCount)
     } }
+    @Test fun servicePartialResponseCannotBecomeACompleteOcrResult() = tls { server,client -> runBlocking {
+        server.enqueue(reply("未完成文字").setHeader("x-dashscope-partialresponse","true"))
+        try{adapter(server,client).recognize(byteArrayOf(1),"image/png");fail()}catch(e:AiFailure){assertTrue(e.message!!.contains("未完成"))}
+        assertEquals(1,server.requestCount)
+    } }
+    @Test fun ocrWaitPolicyDoesNotChangeChatAsrOrTransportSafety() {
+        assertEquals(300_000,RecognitionProvider.ocrClient.readTimeoutMillis)
+        assertEquals(330_000,RecognitionProvider.ocrClient.callTimeoutMillis)
+        assertEquals(60_000,DeepSeekProvider.defaultClient.readTimeoutMillis)
+        assertEquals(180_000,DeepSeekProvider.defaultClient.callTimeoutMillis)
+        assertFalse(RecognitionProvider.ocrClient.retryOnConnectionFailure)
+        assertFalse(RecognitionProvider.ocrClient.followRedirects);assertFalse(RecognitionProvider.ocrClient.followSslRedirects)
+    }
+    @Test fun cancellationStillInterruptsLongOcrWaitPromptly() = tls { server,client -> runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val waiting=client.newBuilder().readTimeout(300,TimeUnit.SECONDS).callTimeout(330,TimeUnit.SECONDS).build()
+        val job=launch(Dispatchers.IO){adapter(server,waiting).recognize(byteArrayOf(1),"image/png")}
+        assertNotNull(withContext(Dispatchers.IO){server.takeRequest(3,TimeUnit.SECONDS)})
+        withTimeout(2000){job.cancelAndJoin()}
+        withTimeout(2000){while(waiting.dispatcher.runningCallsCount()!=0)delay(10)}
+        assertEquals(1,server.requestCount)
+    } }
 }

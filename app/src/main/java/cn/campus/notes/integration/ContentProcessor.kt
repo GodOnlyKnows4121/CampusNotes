@@ -45,7 +45,8 @@ class ContentProcessor(context: Context, private val repo: LocalRepository, priv
                     if (kind == "parse") "本机解析上限 20 MB，原件保留" else "音频原件上限 512 MB，图片上限 7 MB；原件保留"
                 }
                 val stamp = repo.sourceStamp(source)
-                result = result!!.copy(status = "running", sourceStamp = stamp)
+                result = result!!.copy(status = "running", sourceStamp = stamp,
+                    detail=if(kind=="ocr")"正在发送并等待图片识别完整结果，单次最多约5.5分钟；可取消，不自动重试，原件保留" else "")
                 persist(result!!)
                 val text = if (credentials == null) parser?.invoke(file, source) ?: localParser.extract(file, source) { coroutineContext.ensureActive() } else {
                     val adapter = recognizer(credentials)

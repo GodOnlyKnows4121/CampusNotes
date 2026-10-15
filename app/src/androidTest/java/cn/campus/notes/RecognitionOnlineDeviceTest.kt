@@ -16,6 +16,15 @@ import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import okhttp3.Call
+import okhttp3.EventListener
+import okhttp3.Handshake
+import okhttp3.Protocol
+import okhttp3.Response
+import java.io.IOException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
 
 /** Explicit opt-in only. Two paid requests, synthetic inputs; secrets remain on the device. */
 @RunWith(AndroidJUnit4::class)
@@ -55,7 +64,28 @@ class RecognitionOnlineDeviceTest {
             canvas.drawText("Room: A203",40f,240f,paint)
             ByteArrayOutputStream().use{out->bitmap.compress(Bitmap.CompressFormat.PNG,100,out);out.toByteArray()}
         }finally{bitmap.recycle()}
-        val text=RecognitionProvider(configured(ProviderKind.OCR)).recognize(image,"image/png").lowercase().replace(Regex("[^a-z0-9]"),"")
+        val client=RecognitionProvider.ocrClient.newBuilder().eventListener(SafeTiming()).build()
+        val text=RecognitionProvider(configured(ProviderKind.OCR),client).recognize(image,"image/png").lowercase().replace(Regex("[^a-z0-9]"),"")
         assertTrue("OCR must recognize the synthetic test text",text.contains("campusnotesocrtest")&&text.contains("rooma203"))
+    }
+    /** Metadata only: never log URLs, headers, addresses, credentials, request/response content. */
+    private class SafeTiming:EventListener(){
+        private val start=android.os.SystemClock.elapsedRealtime()
+        private fun mark(stage:String){
+            val message="OCR_TIMING ${android.os.SystemClock.elapsedRealtime()-start}ms $stage\n"
+            InstrumentationRegistry.getInstrumentation().sendStatus(2,android.os.Bundle().apply{putString("stream",message)})
+        }
+        override fun callStart(call:Call)=mark("call_start")
+        override fun dnsStart(call:Call,domainName:String)=mark("dns_start")
+        override fun dnsEnd(call:Call,domainName:String,inetAddressList:List<InetAddress>)=mark("dns_end")
+        override fun connectStart(call:Call,inetSocketAddress:InetSocketAddress,proxy:Proxy)=mark("connect_start")
+        override fun secureConnectStart(call:Call)=mark("tls_start")
+        override fun secureConnectEnd(call:Call,handshake:Handshake?)=mark("tls_end")
+        override fun connectEnd(call:Call,inetSocketAddress:InetSocketAddress,proxy:Proxy,protocol:Protocol?)=mark("connect_end")
+        override fun requestBodyEnd(call:Call,byteCount:Long)=mark("upload_complete")
+        override fun responseHeadersEnd(call:Call,response:Response)=mark("response_headers_http_${response.code}")
+        override fun responseBodyEnd(call:Call,byteCount:Long)=mark("response_body_complete")
+        override fun callEnd(call:Call)=mark("call_end")
+        override fun callFailed(call:Call,ioe:IOException)=mark("call_failed_${ioe.javaClass.simpleName}")
     }
 }

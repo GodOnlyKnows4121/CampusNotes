@@ -151,6 +151,7 @@ fun ContentProcessingPanel(file: LibraryNode, onReview: (String) -> Unit) {
             if(problem!=null)Text(problem,color=MaterialTheme.colorScheme.error)
             else Text("实际请求：POST ${DeepSeekProvider.completionUrl(snapshot.endpoint)}")
             Text("将仅发送这份原件到所示服务，可能产生费用。采用兼容 Chat Completions 的 input_audio / image_url 协议；模型名称不等于能力已验证。不会使用 DeepSeek 密钥替代识别配置。")
+            if(kind=="ocr")Text("非流式图片识别需等待完整结果，单次最多约5.5分钟；可取消，不自动重试。")
         } }, confirmButton = { TextButton(enabled = problem==null && snapshot.hasKey && file.bytes in 1..(if(kind=="asr")512_000_000L else RecognitionProvider.MAX_INPUT.toLong()), onClick = {
             upload = null; vm.contentProcessor.start(file.id, kind, snapshot)
         }) { Text("发送并处理") } }, dismissButton = { TextButton(onClick = { upload = null }) { Text("取消") } })

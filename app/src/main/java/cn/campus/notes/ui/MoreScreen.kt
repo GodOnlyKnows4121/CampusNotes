@@ -48,7 +48,7 @@ fun MoreScreen() {
             OutlinedButton(onClick = { vm.act("示例已载入，示例条目均带标注") { vm.repository.loadExamples() } },
                 enabled = !busy, modifier = Modifier.testTag("load_examples")) { Text("载入示例课表与资料结构") }
         }
-        Text("0.6.1 · 本地优先\n独立会话与多模型配置；识别主动发起，文字需核对确认。附件对话、复习与备份尚未实现。卸载应用会删除本地数据。",
+        Text("0.6.2 · 本地优先\n独立会话与多模型配置；识别主动发起，文字需核对确认。附件对话、复习与备份尚未实现。卸载应用会删除本地数据。",
             style = MaterialTheme.typography.bodySmall)
     }
     when (selected) {
