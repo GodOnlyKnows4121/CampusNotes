@@ -41,6 +41,7 @@ class ChatSessionStore(private val db: CampusDatabase) {
     }
     suspend fun delete(id: String): String = db.withTransaction {
         require(db.sessions().messages(id).none { it.status == "streaming" }) { "请先停止该会话的生成再删除" }
+        require(db.workflows().all().none{it.sessionId==id&&it.status in setOf("planning","processing","answering")}){"请先停止该会话的联动任务"}
         db.sessions().clear(id); db.sessions().delete(id)
         if(db.sessions().all().isEmpty()) create().id else db.sessions().all().first().id
     }

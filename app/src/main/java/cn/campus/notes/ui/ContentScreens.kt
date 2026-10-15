@@ -49,7 +49,7 @@ fun rememberCaptureActions(): (String) -> Unit {
 }
 
 @Composable
-fun RecordingDialog(onDismiss: () -> Unit) {
+fun RecordingDialog(onAttach:((String)->Unit)?=null,onDismiss: () -> Unit) {
     val vm = LocalCampus.current; val context = LocalContext.current
     val state by RecordingService.state.collectAsState()
     var recovery by rememberSaveable { mutableStateOf(false) }
@@ -85,6 +85,7 @@ fun RecordingDialog(onDismiss: () -> Unit) {
             }, modifier = Modifier.testTag("recording_start")) { Text("开始录音") }
         }
         state.recordId?.takeIf { state.status == "complete" }?.let { id -> TextButton(onClick = { record = id }) { Text("查看已保存原件 / 主动转写") } }
+        if(onAttach!=null)state.recordId?.takeIf{state.status=="complete"}?.let{id->TextButton(onClick={onAttach(id);onDismiss()}){Text("将该录音添加到本次对话")}}
         TextButton(onClick = { recovery = true }) { Text("采集恢复") }
     }
     if (recovery) CaptureRecoveryDialog { recovery = false }
@@ -137,6 +138,12 @@ fun ContentProcessingPanel(file: LibraryNode, onReview: (String) -> Unit) {
         val label = mapOf("waiting" to "等待", "running" to "处理中", "review" to "待核对", "confirmed" to "已确认", "failed" to "失败", "cancelled" to "已取消", "interrupted" to "已中断")[result.status] ?: result.status
         Text("${mapOf("parse" to "本机解析", "asr" to "语音转写", "ocr" to "图片识别")[result.kind]} · $label", modifier = Modifier.testTag("content_status_${result.status}"))
         if (result.detail.isNotBlank()) Text(result.detail, style = MaterialTheme.typography.bodySmall)
+        if(result.diagnostics.isNotBlank()){
+            val diagnostic=runCatching{org.json.JSONObject(result.diagnostics)}.getOrNull()
+            val outcome=when(diagnostic?.optString("outcome")){"complete"->"完成";"transport_failure"->"传输失败";"cancelled"->"已取消";"rejected"->"响应未通过校验";"configuration_error"->"配置错误";else->"处理中"}
+            if(diagnostic!=null)Text("请求诊断：${diagnostic.optString("phase")} · ${diagnostic.optLong("elapsedMs")}毫秒 · $outcome"+
+                if(diagnostic.isNull("httpStatus"))"" else " · HTTP ${diagnostic.optInt("httpStatus")}",style=MaterialTheme.typography.bodySmall)
+        }
         if (result.status in setOf("waiting", "running")) TextButton(onClick = { vm.contentProcessor.cancel(file.id) }) { Text("取消处理") }
         if (result.text.isNotBlank()) TextButton(onClick = { onReview(result.id) }) { Text(if(result.status in setOf("review","confirmed")) "查看 / 核对文字" else "查看部分文字（未完成）") }
     }

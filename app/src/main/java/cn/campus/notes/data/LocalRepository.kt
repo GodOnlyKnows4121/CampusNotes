@@ -7,6 +7,7 @@ import androidx.room.withTransaction
 import cn.campus.notes.domain.DemoData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -92,7 +93,8 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         require(Regex("[a-f0-9-]{36}").matches(name)) { "无效的本地文件引用" }
         return File(documents, name)
     }
-    suspend fun importDocument(topicId: String, uri: Uri) = withContext(Dispatchers.IO) { fileLock.withLock {
+    suspend fun importDocument(topicId: String, uri: Uri) { importDocumentReference(topicId,uri) }
+    suspend fun importDocumentReference(topicId: String, uri: Uri):String = withContext(Dispatchers.IO) { fileLock.withLock {
         require(uri.scheme == "content") { "请选择系统文件选择器中的文档" }
         var title = "导入资料"
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
@@ -100,10 +102,12 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         }
         val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
         val input = context.contentResolver.openInputStream(uri) ?: error("无法读取所选文件")
-        input.use { importStream(topicId, title, mime, it) }
+        input.use { importStreamReference(topicId, title, mime, it) }
     } }
-    internal suspend fun importStream(topicId: String, title: String, mime: String, input: InputStream) {
+    internal suspend fun importStream(topicId: String, title: String, mime: String, input: InputStream) { importStreamReference(topicId,title,mime,input) }
+    private suspend fun importStreamReference(topicId: String, title: String, mime: String, input: InputStream):String {
         val id = newId()
+        val nodeId=newId()
         val temp = File(documents, "$id.part")
         val target = document(id)
         var committed = false
@@ -121,11 +125,12 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
             }
             check(temp.renameTo(target)) { "无法保存本地副本" }
             withContext(NonCancellable) {
-                saveNode(LibraryNode(parentId = topicId, kind = NodeKind.ORIGINAL, title = title,
+                saveNode(LibraryNode(id=nodeId,parentId = topicId, kind = NodeKind.ORIGINAL, title = title,
                     localName = id, mime = mime, bytes = total))
                 committed = true
             }
         } catch (e: Exception) { temp.delete(); if (!committed) target.delete(); throw e }
+        return nodeId
     }
     suspend fun storageBytes(): Long = withContext(Dispatchers.IO) {
         documents.listFiles().orEmpty().sumOf { it.length() } + captures.listFiles().orEmpty().sumOf { it.length() }
@@ -144,14 +149,31 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         }
         node.id
     } }
-    fun sourceStamp(node: LibraryNode): String {
-        val file = document(node.localName ?: error("本地原件缺失"))
+    fun sourceStamp(node: LibraryNode): String = stampFile(node,document(node.localName ?: error("本地原件缺失")))
+    private fun stampFile(node:LibraryNode,file:File):String {
         require(file.isFile) { "本地原件缺失" }
         val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(node.id.toByteArray()); digest.update(node.localName.toByteArray())
+        digest.update(node.id.toByteArray()); digest.update((node.localName?:error("本地原件缺失")).toByteArray())
         file.inputStream().use { input -> val buffer = ByteArray(65536); while(true) { val n = input.read(buffer); if(n < 0) break; digest.update(buffer,0,n) } }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
+    data class FrozenOriginal(val file:File):java.io.Closeable {override fun close(){file.delete()}}
+    suspend fun freezeOriginal(source:WorkflowSource):FrozenOriginal=withContext(Dispatchers.IO){fileLock.withLock{
+        val node=dao.nodes().find{it.id==source.id&&it.kind==NodeKind.ORIGINAL}?:error("来源已移入回收站或删除")
+        require(node.title==source.title&&node.mime==source.mime&&node.parentId==source.parentId&&node.bytes==source.bytes){"来源信息已改变，请重新预览任务"}
+        val original=document(node.localName?:error("原件缺失"))
+        require(original.length() in 1..512_000_000L){"原件为空或超过本轮处理上限"}
+        val dir=File(context.cacheDir,"workflow-sources").apply{mkdirs()}
+        val frozen=File.createTempFile("source-",".snapshot",dir)
+        try{
+            original.inputStream().use{input->frozen.outputStream().use{output->val buffer=ByteArray(65536);var total=0L;while(true){
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val n=input.read(buffer);if(n<0)break;total+=n;require(total<=512_000_000L){"原件超过处理上限"};output.write(buffer,0,n)
+            }}}
+            require(stampFile(node,frozen)==source.stamp&&sourceStamp(node)==source.stamp){"原件版本已改变，本次未上传"}
+            FrozenOriginal(frozen)
+        }catch(e:Exception){frozen.delete();throw e}
+    }}
     suspend fun cleanOrphans(): Int = withContext(Dispatchers.IO) { fileLock.withLock {
         val retained = (dao.nodes() + db.features().allTrash().flatMap { it.nodes() }).mapNotNull { it.localName }.toSet()
         val orphaned = documents.listFiles().orEmpty().filter { it.name !in retained }
@@ -330,7 +352,15 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         db.withTransaction {
             db.features().deleteTrash(id)
             val retainedIds=(dao.nodes()+db.features().allTrash().flatMap { it.nodes() }).map { it.id }.toSet()
-            db.content().deleteSources(item.nodes().map { it.id }.filter { it !in retainedIds })
+            val deleted=item.nodes().map { it.id }.filter { it !in retainedIds }
+            db.content().deleteSources(deleted)
+            db.workflows().all().forEach{workflow->
+                val references=runCatching{WorkflowApproval.read(workflow.approval).sources.map{it.id}}.getOrDefault(emptyList())
+                if(references.any{it in deleted}){
+                    db.workflows().update(workflow.copy(status="invalidated",results="[]",inputs="[]",error="来源已永久删除，任务不可继续",updatedAt=System.currentTimeMillis()))
+                    db.workflows().clearMessageReferences(workflow.id)
+                }
+            }
         }
         val retained=(dao.nodes()+db.features().allTrash().flatMap { it.nodes() }).mapNotNull { it.localName }.toSet()
         names.filter { it !in retained }.forEach { name -> val f=document(name); check(!f.exists()||f.delete()) { "部分副本清理失败，请稍后清理未关联副本" } }

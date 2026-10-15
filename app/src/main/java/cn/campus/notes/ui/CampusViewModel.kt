@@ -37,6 +37,11 @@ class CampusViewModel(application: Application) : AndroidViewModel(application) 
     private val draftWrites = Channel<Pair<String,String>>(Channel.UNLIMITED)
     val runningSession = MutableStateFlow<String?>(null)
     val tasks = repository.db.dao().observeTasks().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val workflows=repository.db.workflows().observe().stateIn(viewModelScope,SharingStarted.Eagerly,emptyList())
+    val attachments=repository.db.workflows().attachments().stateIn(viewModelScope,SharingStarted.Eagerly,emptyList())
+    val workflowApproval=MutableStateFlow<WorkflowApproval?>(null)
+    val runningWorkflow=MutableStateFlow<String?>(null)
+    val workflowService=WorkflowService(repository,settingsStore,contentProcessor)
     val aiReady = MutableStateFlow(false)
     val aiRunning = MutableStateFlow<String?>(null)
     val liveReply = MutableStateFlow("")
@@ -50,7 +55,7 @@ class CampusViewModel(application: Application) : AndroidViewModel(application) 
     init {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                repository.db.dao().interruptChat(); repository.db.dao().interruptPlans(); sessionStore.initialize()
+                repository.db.dao().interruptChat(); repository.db.dao().interruptPlans();repository.db.workflows().interrupt(); sessionStore.initialize()
                 val preferred=settingsStore.data.first().activeChatSession
                 activeChat.value=repository.db.sessions().session(preferred)?.id?:repository.db.sessions().all().first().id
                 aiReady.value = true
@@ -79,7 +84,7 @@ class CampusViewModel(application: Application) : AndroidViewModel(application) 
             catch (e: Exception) {
                 if (e is CancellationException) throw e
                 error.value = ChatService.safeMessage(e)
-            } finally { liveReply.value = ""; aiRunning.value = null; runningSession.value=null }
+            } finally { liveReply.value = ""; aiRunning.value = null; runningSession.value=null;runningWorkflow.value=null }
         }
     }
     fun updateDraft(id:String,text:String) {
@@ -105,6 +110,40 @@ class CampusViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun cancelAi() { aiJob?.cancel() }
     fun clearChat() { val id=activeChat.value;request("清空对话") { sessionStore.clear(id) } }
+    fun setAttachment(session:String,source:String,selected:Boolean)=act {
+        if(selected){
+            require(repository.db.dao().nodes().any{it.id==source&&it.kind==NodeKind.ORIGINAL}){"原件已不存在"}
+            val existing=repository.db.workflows().selected(session)
+            require(existing.any{it.sourceId==source}||existing.size<10){"每次最多附加10份原件"}
+            repository.db.workflows().attach(ChatAttachment(session,source))
+        }else repository.db.workflows().detach(session,source)
+    }
+    fun importAttachments(session:String,uris:List<android.net.Uri>){var summary="";act(onDone={message.value=summary}) {
+        val distinct=uris.distinct();require(distinct.size+repository.db.workflows().selected(session).size<=10){"本次导入和已有附件合计最多10份"}
+        val topic=repository.inboxTopic();var saved=0;var failed=0
+        distinct.forEach{uri->try{val id=repository.importDocumentReference(topic,uri);repository.db.workflows().attach(ChatAttachment(session,id));saved++}
+            catch(e:Exception){if(e is CancellationException)throw e;failed++}}
+        summary="已保存并附加${saved}份原件，未调用AI"+if(failed>0)"；${failed}份导入失败，可重选失败文件" else ""
+    }}
+    fun prepareWorkflow(mode:String,prompt:String,ids:List<String>,profile:String?=null,reasoning:String?=null,topic:String?=null){
+        if(aiRunning.value!=null)return
+        val session=sessions.value.find{it.id==activeChat.value}?:return
+        act {workflowApproval.value=workflowService.prepare(session.id,mode,prompt,ids,profile?:session.profileId,reasoning?:session.reasoning,topic)}
+    }
+    fun startWorkflow(approval:WorkflowApproval)=request("联动识别") {
+        runningSession.value=approval.sessionId;runningWorkflow.value=approval.id
+        val result=workflowService.start(approval,accepted={
+            withContext(Dispatchers.Main){if((chatDrafts.value[approval.sessionId]?:sessions.value.find{it.id==approval.sessionId}?.draft)==approval.prompt)updateDraft(approval.sessionId,"")}
+            if(approval.mode=="chat")approval.sources.forEach{repository.db.workflows().detach(approval.sessionId,it.id)}
+        },update={liveReply.value=it})
+        message.value=if(result.status=="review")"识别/解析已完成，请逐份核对确认后继续" else "联动任务已完成，请查看实际结果及日志"
+    }
+    fun resumeWorkflow(id:String)=request("继续联动") {
+        runningWorkflow.value=id;runningSession.value=repository.db.workflows().get(id)?.sessionId
+        workflowService.resume(id){liveReply.value=it};message.value="已依据确认资料完成模型请求，请核对结果"
+        storageBytes.value=repository.storageBytes()
+    }
+    fun cancelPendingWorkflow(id:String)=act {workflowService.cancelPending(id)}
     fun selectSession(id:String)=act { require(repository.db.sessions().session(id)!=null){"会话已不存在"};settingsStore.activeChatSession(id);activeChat.value=id }
     fun newSession()=act { val next=sessionStore.create(currentSession.value?.profileId?:LEGACY_CHAT);settingsStore.activeChatSession(next.id);activeChat.value=next.id }
     fun deleteSession(id:String)=act("会话已删除") { val next=sessionStore.delete(id);chatDrafts.value=chatDrafts.value-id;if(activeChat.value==id){settingsStore.activeChatSession(next);activeChat.value=next} }

@@ -116,7 +116,7 @@ class ChatSessionsTest {
             raw.execSQL("INSERT INTO content_results VALUES ('r','original','hash','parse','confirmed','已核对文字','','本机解析',NULL,1,1)")
             raw.version=4
         }
-        val upgraded=Room.databaseBuilder(context,CampusDatabase::class.java,file.name).addMigrations(CampusDatabase.MIGRATION_4_5).build()
+        val upgraded=Room.databaseBuilder(context,CampusDatabase::class.java,file.name).addMigrations(CampusDatabase.MIGRATION_4_5, CampusDatabase.MIGRATION_5_6).build()
         try{assertEquals("历史会话",upgraded.sessions().all().single().title);val messages=upgraded.sessions().messages(LEGACY_CHAT);assertEquals(listOf("旧问题","旧回答"),messages.map{it.content});assertTrue(messages.all{it.modelName.isEmpty()});assertEquals("已核对文字",upgraded.content().result("r")!!.text)
             val task=upgraded.dao().task("old-task")!!;assertEquals("成果正文",task.body);assertEquals("output",task.outputId);assertEquals("complete",task.status);assertEquals("",task.modelName)
         }finally{upgraded.close()}

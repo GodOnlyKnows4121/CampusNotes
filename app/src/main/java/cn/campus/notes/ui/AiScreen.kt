@@ -26,6 +26,8 @@ fun AiScreen() {
     val messages by vm.chat.collectAsState()
     val ready by vm.aiReady.collectAsState()
     val active by vm.activeChat.collectAsState()
+    val approval by vm.workflowApproval.collectAsState()
+    var workflowDetail by rememberSaveable{mutableStateOf<String?>(null)}
     var mode by rememberSaveable { mutableIntStateOf(0) }
     var clear by rememberSaveable { mutableStateOf(false) }
     var sessionsOpen by rememberSaveable { mutableStateOf(false) }
@@ -44,7 +46,7 @@ fun AiScreen() {
             Text("${running}中…", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = vm::cancelAi, modifier = Modifier.testTag("ai_cancel")) { Text("停止") }
         }
-        modes.SaveableStateProvider(mode) { if (mode == 0) key(active){ChatPanel(compact)} else AgentPanel() }
+        modes.SaveableStateProvider(mode) { if (mode == 0) key(active){ChatPanel(compact){workflowDetail=it}} else AgentPanel{workflowDetail=it} }
       }
     }
     if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("清空本机对话？") },
@@ -52,10 +54,12 @@ fun AiScreen() {
         confirmButton = { TextButton(onClick = { vm.clearChat(); clear = false }, enabled = running == null) { Text("确认清空") } },
         dismissButton = { TextButton(onClick = { clear = false }) { Text("取消") } })
     if(sessionsOpen)ChatSessionsDialog{sessionsOpen=false}
+    approval?.let{WorkflowPreview(it){vm.workflowApproval.value=null}}
+    workflowDetail?.let{WorkflowDetailDialog(it){workflowDetail=null}}
 }
 
 @Composable
-private fun ColumnScope.ChatPanel(compact: Boolean) {
+private fun ColumnScope.ChatPanel(compact: Boolean,onWorkflow:(String)->Unit) {
     val vm = LocalCampus.current
     val allMessages by vm.chat.collectAsState()
     val live by vm.liveReply.collectAsState()
@@ -68,14 +72,22 @@ private fun ColumnScope.ChatPanel(compact: Boolean) {
     val messages=allMessages.filter{it.sessionId==active}
     val draft=drafts[active]?:session?.draft.orEmpty()
     val levels=ModelCapabilities.levels(config?.endpoint.orEmpty(),config?.model.orEmpty())
+    val allAttachments by vm.attachments.collectAsState();val allWorkflows by vm.workflows.collectAsState()
+    val attached=allAttachments.filter{it.sessionId==active}.mapNotNull{item->LocalContent.current.nodes.find{it.id==item.sourceId}}
+    val workflows=allWorkflows.filter{it.sessionId==active&&runCatching{WorkflowApproval.read(it.approval).mode=="chat"}.getOrDefault(false)}
     val scroll = rememberLazyListState()
     if (!compact) Text("${session?.title?:"正在读取会话"}\n"+if (config?.hasKey==true && config.endpoint.isNotBlank() && config.model.isNotBlank())
         "发送到 ${config.endpoint} · ${config.model}" else "请配置所选语言模型的地址、模型和密钥。",
         style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
-    LaunchedEffect(messages.size) { if (messages.isNotEmpty()) scroll.animateScrollToItem(messages.lastIndex) }
+    var allWorkflowHistory by rememberSaveable{mutableStateOf(false)}
+    val visibleWorkflows=if(allWorkflowHistory)workflows else workflows.take(10)
+    val workflowRows=visibleWorkflows.size+if(workflows.size>10)1 else 0
+    LaunchedEffect(messages.size,workflowRows) { if (messages.isNotEmpty()) scroll.animateScrollToItem(workflowRows+messages.lastIndex) }
     LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("chat_history"), state = scroll,
         verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
-        if (messages.isEmpty()) item {
+        visibleWorkflows.forEach{task->item(key="workflow_${task.id}"){WorkflowCard(task){onWorkflow(task.id)}}}
+        if(workflows.size>10)item{TextButton(onClick={allWorkflowHistory=!allWorkflowHistory}){Text(if(allWorkflowHistory)"仅显示最近10项联动任务" else "查看全部${workflows.size}项联动任务")}}
+        if (messages.isEmpty()&&workflows.isEmpty()) item {
             Column(Modifier.fillMaxWidth().padding(vertical=if(compact)4.dp else 24.dp),horizontalAlignment=androidx.compose.ui.Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){
                 if(!compact){LineGlyph("助手");Text("今天想聊些什么？",style=MaterialTheme.typography.headlineSmall);Text("解释知识点，梳理课堂内容。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary)}
                 listOf("帮我解释函数与极限","帮我梳理课堂笔记的重点").forEach{prompt->OutlinedButton(onClick={vm.updateDraft(active,prompt)},modifier=Modifier.fillMaxWidth(),enabled=ready){Text(prompt,style=MaterialTheme.typography.bodySmall)}}
@@ -93,13 +105,18 @@ private fun ColumnScope.ChatPanel(compact: Boolean) {
                     if (row.role == "assistant" && row.status == "complete") TextButton(onClick = {
                         vm.act("回答已保存为本地记录") { vm.repository.saveNote(Note(title = "AI 对话摘录", body = row.content)) }
                     }) { Text("保存为记录") }
+                    row.workflowId?.let{id->TextButton(onClick={onWorkflow(id)}){Text("查看本次资料与引用来源")}}
                 }
             }
         }
     }
     var configOpen by rememberSaveable { mutableStateOf(false) }
     var attachOpen by rememberSaveable { mutableStateOf(false) }
+    var audioOnly by rememberSaveable { mutableStateOf(false) }
     var strengthMenu by remember { mutableStateOf(false) };var modelMenu by remember { mutableStateOf(false) }
+    if(attached.isNotEmpty())Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(4.dp)){
+        attached.forEach{source->InputChip(selected=true,onClick={vm.setAttachment(active,source.id,false)},label={Text("${source.title} ×",maxLines=1)},modifier=Modifier.testTag("attached_${source.id}"))}
+    }
     Surface(shape=androidx.compose.foundation.shape.RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,
         border=androidx.compose.foundation.BorderStroke(1.dp,MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(8.dp)) {
@@ -107,30 +124,32 @@ private fun ColumnScope.ChatPanel(compact: Boolean) {
                 modifier = Modifier.fillMaxWidth().testTag("ai_draft"),minLines=1,maxLines=if(compact)1 else 3,enabled=ready,
                 colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=androidx.compose.ui.graphics.Color.Transparent,unfocusedBorderColor=androidx.compose.ui.graphics.Color.Transparent))
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
-                TextButton(onClick={attachOpen=true},contentPadding=PaddingValues(2.dp),modifier=Modifier.width(24.dp)){Text("＋")}
-                TextButton(onClick={attachOpen=true},contentPadding=PaddingValues(2.dp)){Text("语音",style=MaterialTheme.typography.labelSmall)}
+                TextButton(onClick={audioOnly=false;attachOpen=true},contentPadding=PaddingValues(2.dp),modifier=Modifier.width(24.dp).testTag("ai_attach")){Text("＋")}
+                TextButton(onClick={audioOnly=true;attachOpen=true},contentPadding=PaddingValues(2.dp),modifier=Modifier.testTag("ai_voice")){Text("语音",style=MaterialTheme.typography.labelSmall)}
                 Box{TextButton(onClick={strengthMenu=true},contentPadding=PaddingValues(2.dp),modifier=Modifier.testTag("chat_strength")){Text((runCatching{ThinkingLevel.from(session?.reasoning?:"default").label}.getOrDefault("设置强度"))+" ⌄",style=MaterialTheme.typography.labelSmall)}
                     DropdownMenu(strengthMenu,{strengthMenu=false}){levels.forEach{level->DropdownMenuItem(text={Text(level.label)},modifier=Modifier.testTag("choose_strength_${level.id}"),onClick={session?.let{vm.selectChatModel(it.profileId,level.id)};strengthMenu=false})};DropdownMenuItem(text={Text(if(levels.size==1)"此模型暂只提供默认档位" else "深入思考可能增加耗时与用量",style=MaterialTheme.typography.bodySmall)},onClick={},enabled=false)}
                 }
                 Box(Modifier.weight(1f)){TextButton(onClick={modelMenu=true},contentPadding=PaddingValues(2.dp),modifier=Modifier.fillMaxWidth().testTag("chat_model")){Text(config?.model?.ifBlank{"选择模型"}.orEmpty().ifBlank{"选择模型"}+" ⌄",style=MaterialTheme.typography.labelSmall,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)}
                     DropdownMenu(modelMenu,{modelMenu=false}){settings.chatProfiles.forEach{profile->DropdownMenuItem(text={Text("${profile.title} · ${profile.model.ifBlank{"未配置"}}")},modifier=Modifier.testTag("choose_profile_${profile.id}"),onClick={vm.selectChatModel(profile.id,"default");modelMenu=false})};DropdownMenuItem(text={Text("管理语言模型")},onClick={modelMenu=false;configOpen=true})}
                 }
-                Button(onClick={vm.sendChat(draft)},enabled=ready&&running==null&&draft.isNotBlank()&&session!=null&&config!=null,contentPadding=PaddingValues(0.dp),modifier=Modifier.size(36.dp).testTag("ai_send")){Text("↑")}
+                Button(onClick={if(attached.isEmpty())vm.sendChat(draft) else vm.prepareWorkflow("chat",draft,attached.map{it.id})},enabled=ready&&running==null&&draft.isNotBlank()&&session!=null&&config!=null,contentPadding=PaddingValues(0.dp),modifier=Modifier.size(36.dp).testTag("ai_send")){Text("↑")}
             }
         }
     }
     if(configOpen)ChatProfilesDialog{configOpen=false}
-    if(attachOpen)NotImplementedDialog("语音与附件","当前对话仅发送文字。音频、照片和文档可在首页采集或导入，再在原件详情中主动识别/解析并核对。附件对话仍待 AI 工作流阶段接入。"){attachOpen=false}
+    if(attachOpen)AttachmentPicker(active,audioOnly){attachOpen=false}
 }
 
 @Composable
-private fun AgentPanel() {
+private fun AgentPanel(onWorkflow:(String)->Unit) {
     val vm = LocalCampus.current
     val data = LocalContent.current
     val tasks by vm.tasks.collectAsState()
     val running by vm.aiRunning.collectAsState()
     val settings by vm.settings.collectAsState()
     val ready by vm.aiReady.collectAsState()
+    val workflows by vm.workflows.collectAsState()
+    var goal by rememberSaveable{mutableStateOf("按本组规则整理课堂资料")}
     var profileId by rememberSaveable{mutableStateOf(LEGACY_CHAT)};var reasoning by rememberSaveable{mutableStateOf("default")}
     val config = settings.chatProfiles.find{it.id==profileId}
     val supportedLevels = ModelCapabilities.levels(config?.endpoint.orEmpty(),config?.model.orEmpty())
@@ -174,6 +193,9 @@ private fun AgentPanel() {
         Button(onClick = { topic?.let { vm.planOrganize(it.id,profileId,reasoning) } },
             enabled = ready && running == null && topic != null && originals.isNotEmpty(),
             modifier = Modifier.fillMaxWidth().testTag("agent_generate")) { Text("发送原件并生成整理计划") }
+        OutlinedTextField(goal,{if(it.length<=8000)goal=it},label={Text("联动整理目标")},modifier=Modifier.fillMaxWidth().testTag("workflow_goal"))
+        Button(enabled=ready&&running==null&&topic!=null&&originals.isNotEmpty()&&goal.isNotBlank(),onClick={vm.prepareWorkflow("organize",goal,originals.map{it.id},profileId,reasoning,topic?.id)},modifier=Modifier.fillMaxWidth().testTag("agent_workflow")){Text("联动识别 / 解析后整理")}
+        workflows.filter{runCatching{WorkflowApproval.read(it.approval).mode=="organize"}.getOrDefault(false)}.forEach{task->WorkflowCard(task){onWorkflow(task.id)}}
         Text("执行边界：只在所选主题的 AI 成果区新建文件；保留全部原件。模型不能指定路径或删除文件。沙箱外修改暂不提供执行入口，未来接入时必须逐次确认。",
             style = MaterialTheme.typography.bodySmall)
         Text("任务与执行日志", style = MaterialTheme.typography.titleMedium)

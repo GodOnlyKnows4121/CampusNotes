@@ -1,6 +1,6 @@
 # 校园记录与 AI 助手
 
-Android 0.6.2，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿用深色五页、采集与内容核对、独立会话和多语言模型，提供识别协议预检、配置示例及独立 OCR 等待策略。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)，识别接入与三模型联动状态见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
+Android 0.7.0-workflows，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿用深色五页与本地优先结构，新增选定附件的 DeepSeek→ASR/OCR/文档解析联动、逐份核对后继续回答或整理，以及脱敏识别诊断。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)，操作与本轮验证见 [VALIDATION_WORKFLOWS.md](VALIDATION_WORKFLOWS.md)，历史问题见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
 
 ## 已实现的本地功能
 
@@ -8,7 +8,7 @@ Android 0.6.2，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 | --- | --- |
 | 首页 V2.1.10 | 固定一屏、校园卡片、录音/系统拍照/文字/导入入口、最近记录、本地搜索、独立校园页与作业待办 |
 | 日程 | 多学期、自定义节次、跨节与单双/指定周、冲突校验；格子原地放大，月历选教学周 |
-| AI | 独立会话、各自草稿/上下文/模型/强度；流式文字对话、停止、错误提示、回答另存；文本整理计划、预览确认与日志 |
+| AI | 独立会话/草稿/模型/强度；流式对话、停止、另存；多类型附件与受控识别调度、逐份核对后回答/整理、来源与日志 |
 | 资料库 V1.5 | 两列文件夹、多大组独立规则/模式、主题/原件/成果；系统多文件导入、打开、重命名、回收站、收件箱与课程关联 |
 | 更多 V1.0 | 多语言模型设置、独立 ASR/OCR 配置、Keystore 密钥、沙箱授权、本地占用、回收站和采集恢复、未关联清理；复习与备份待接入 |
 
@@ -18,7 +18,7 @@ Android 0.6.2，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 
 ## 数据与文件边界
 
-- Room 保存文字记录、课程、资料层级、学期/安排/待办/关联/回收站、识别任务与核对文字，以及独立会话。schema 5 经 4→5 非破坏迁移把旧对话归入“历史会话”，并增加请求配置快照；旧消息未记录的模型显示为未知，不用当前设置倒填。完整保留 1→2→3→4→5 迁移链。
+- Room 保存文字记录、课程、资料层级、学期/安排/待办/关联/回收站、识别任务与核对文字，以及独立会话、附件和联动任务。schema 6 经 5→6 非破坏迁移增加工具任务、引用上下文与脱敏诊断，完整保留1→2→3→4→5→6迁移链；旧消息未记录的模型显示为未知，不用当前设置倒填。
 - DataStore 保存地址、模型名、沙箱偏好、当前会话及密钥密文。密钥使用 Android Keystore 的 AES-256-GCM 加密，旧服务继续绑定原服务类型，新语言模型密钥独立绑定配置 ID；不回显，不进入日志或 Activity 保存状态。输入中的新密钥旋转后清空，已保存密钥保留。
 - 文件通过系统 `OpenDocument` 选择，仅复制用户授权的内容到 App 私有 `files/documents`。单文件上限 100 MB；失败会回滚未完成副本。导入后不依赖外部 URI 的长期授权。
 
@@ -27,7 +27,7 @@ Android 0.6.2，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 - 首页录音申请麦克风权限后，使用 microphone 类型前台服务与常驻通知，提供暂停、继续、结束并保存。单次上限 6 小时或 512 MB；停止失败或进程中断留下的文件在“更多 → 本地存储 → 采集恢复”中主动保存或确认丢弃。真实麦克风与锁屏持续录音尚未真机验收。
 - 拍照调用系统相机，原件直接写入本应用私有临时目录，确认后归入收件箱；取消不上传，也不伪造拍照成功。没有请求广泛存储或本应用相机权限。本轮按用户选择未执行真实拍照验收。
 - 原件详情提供本机文字提取：UTF-8/带 BOM 的 UTF-16 文本、DOCX、PPTX、可读 PDF。上限 20 MB、60000 字；PDF 上限 200 页。旧版 DOC/PPT、加密或损坏文档、扫描 PDF、表格/公式的精确版式保真不在当前解析能力内；可保存和外部打开，扫描页需另存图片后 OCR。不会以空文字表示解析成功。
-- ASR 与 OCR 分别使用已保存的服务地址、模型和密钥。兼容 Chat Completions 的 `input_audio` / `image_url` 请求适配已实现；仅在原件详情预览上传内容并确认后发送，可能计费。模型别名和代理平台能力必须以实际服务为准；ASR 与 OCR 目前各有真实合成短样本通过证据。
+- ASR 与 OCR 分别使用已保存的服务地址、模型和密钥。兼容 Chat Completions 的 `input_audio` / `image_url` 适配可在原件详情主动调用，也可在AI所选资料联动中经范围确认后调度，可能计费。模型别名和代理平台能力以实际服务为准；独立识别及一次完整联动均已有真实合成短样本通过证据。
 - 0.6.1 在设置、上传预览及请求入口检查识别协议。Anthropic Messages、Responses 等路径不能直接用于现有识别适配；官方示例只填入编辑草稿，不自动保存或联网。实际 POST 地址可预览，本地检查通过不等于账号或模型在线可用。
 - OCR 的非流式请求单次最多等待约 5.5 分钟，可取消，不自动重试；对话与 ASR 时限不变。服务标记未完成时不会把结果当作完整文字确认。
 - AAC/M4A（含本应用录音）在本机无损封装为每段最多 3 分钟、约 5 MB，按顺序转写；其他音频本轮限 3 分钟、7 MB。图片限 7 MB。长录音可能触发多次请求，支持取消；失败、中断的部分文字保留但不能当作完整结果确认，也不会自动重发。
@@ -53,7 +53,7 @@ Android 0.6.2，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 
 HTTPS 请求保留证书验证，不跟随跳转，不自动重试；401/403、余额不足、限流、服务器错误、超时和不完整流均给出提示。服务端原始错误正文不回显，以免泄露密钥或敏感内容。只有正常结束的文字回复标记成功。
 
-0.6.0 完成 79 项本机与 12 项真机测试，并保留数据升级；当时仅核对配置、没有在线调用。0.6.1 完成 84 项本机与 12 项不联网真机测试，并按明确授权修正识别配置及各验连一次，结果见下文。自动调度 ASR/OCR、附件对话、引用检索及复习仍待后续实现。
+0.7.0 完成104项本地测试、13项不联网真机测试，以及一次真实三资料联动链路，保留数据升级。所选附件的ASR/OCR调度与附件对话已交付，资料库引用检索及复习仍待后续实现。历史版本在线结果与局限保留在下文及各验证文档中。
 
 原对话助手内容只能取得引用标记，因此页面版本表示本次需求约束，不声称精确复刻旧原型。
 
@@ -84,10 +84,12 @@ APK 默认在 `app/build/outputs/apk/debug/app-debug.apk`，本机交付副本�
 
 `data` 负责 Room、设置、密钥和本地副本；`ui` 负责五页、编辑和 ViewModel；`domain` 包含示例和写入策略；`integration` 包含 DeepSeek HTTPS/SSE、对话与整理、前台录音、文档解析、独立 ASR/OCR 请求适配、AAC 分段及内容任务流程。
 
-后续阶段三继续附件对话、引用检索、扩展代理及复习；阶段四实现提醒、备份恢复和分类存储。沙箱外敏感修改执行器尚未提供。麦克风、前台录音服务、通知及录音唤醒权限均用于明确的录音流程；没有广泛存储权限。每轮验证后提交并推送 GitHub，具体约定见 `AGENTS.md`，本轮证据见 `VALIDATION_OCR_TIMEOUT.md`，此前接入及会话证据见 `VALIDATION_RECOGNITION.md`、`VALIDATION_SESSIONS.md`。
+后续阶段三继续资料库引用检索、扩展代理及复习；阶段四实现提醒、备份恢复和分类存储。沙箱外敏感修改执行器尚未提供。麦克风、前台录音服务、通知及录音唤醒权限均用于明确的录音流程；没有广泛存储权限。每轮验证后提交并推送 GitHub，约定见 `AGENTS.md`；本轮证据见 `VALIDATION_WORKFLOWS.md`，此前证据保留在各版本验证文档中。
 
 0.6.1 经用户明确授权，保留密钥修正识别配置，并各发送一次合成音频/图片：`qwen3-asr-flash` 真实识别通过；`qwen3.5-ocr` 请求超时，未验收成功且未自动重试。未上传个人资料，未进行真实采集。本次未复现 404/405，也不把未收到完整 OCR 响应当作该问题全面解决。
 
-0.6.2 同模型、密钥及合成图片单次复测 OCR，通过固定文字与教室号断言，约 1.24 秒取得 HTTP 200 完整响应。该次低于旧时限，不能证明此前超时根因；历史失败保留。当前两项识别均有真实短样本成功记录，复杂资料、长录音及 DeepSeek 自动调度仍不在此验收结论内。
+0.6.2 同模型、密钥及合成图片单次复测 OCR，通过固定文字与教室号断言，约 1.24 秒取得 HTTP 200 完整响应。该次低于旧时限，不能证明此前超时根因；历史失败保留。
+
+0.7.0 的真实完整附件链路通过：DeepSeek规划→ASR/OCR/本机DOCX提取→核对合成文字→DeepSeek回答，未更改配置、未上传个人资料。AI底部“＋”选择资料，发送后确认范围；新增文字须逐份核对后继续。代理可联动识别后整理，写入仍受沙箱授权约束。识别详情新增脱敏阶段/耗时/HTTP诊断；历史超时无法追溯证明原因，复杂资料和长录音仍需专项验收。
 
 参考官方文档：[DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode/)、[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、[DeepSeek 错误码](https://api-docs.deepseek.com/quick_start/error_codes/)、[Room](https://developer.android.com/jetpack/androidx/releases/room)、[DataStore](https://developer.android.com/jetpack/androidx/releases/datastore)、[系统文档选择器](https://developer.android.com/training/data-storage/shared/documents-files)、[Android 密码学](https://developer.android.com/privacy-and-security/cryptography)。

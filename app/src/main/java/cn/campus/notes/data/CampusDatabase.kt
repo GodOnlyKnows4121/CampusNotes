@@ -37,7 +37,9 @@ data class ChatMessage(@PrimaryKey(autoGenerate = true) val id: Long = 0,
     @ColumnInfo(defaultValue = "''") val modelName: String = "",
     @ColumnInfo(defaultValue = "'legacy'") val profileId: String = LEGACY_CHAT,
     @ColumnInfo(defaultValue = "'default'") val reasoning: String = "default",
-    @ColumnInfo(defaultValue = "''") val endpoint: String = "")
+    @ColumnInfo(defaultValue = "''") val endpoint: String = "",
+    @ColumnInfo(defaultValue = "''") val referenceText:String="",
+    @ColumnInfo(defaultValue = "NULL") val workflowId:String?=null)
 
 @Entity(tableName = "organize_tasks")
 data class OrganizeTask(@PrimaryKey val id: String = newId(), val topicId: String,
@@ -82,13 +84,23 @@ interface CampusDao {
 }
 
 @Database(entities = [Note::class, LocalCourse::class, LibraryNode::class, ChatMessage::class, OrganizeTask::class,
-    Semester::class, CoursePlacement::class, CampusTodo::class, RecordLink::class, TrashEntry::class, ContentResult::class, ChatSession::class], version = 5, exportSchema = true)
+    Semester::class, CoursePlacement::class, CampusTodo::class, RecordLink::class, TrashEntry::class, ContentResult::class, ChatSession::class,ChatAttachment::class,AiWorkflow::class], version = 6, exportSchema = true)
 abstract class CampusDatabase : RoomDatabase() {
     abstract fun dao(): CampusDao
     abstract fun features(): FeatureDao
     abstract fun content(): ContentDao
     abstract fun sessions(): ChatSessionDao
+    abstract fun workflows():WorkflowDao
     companion object {
+        val MIGRATION_5_6=object:Migration(5,6){override fun migrate(db:SupportSQLiteDatabase){
+            db.execSQL("CREATE TABLE IF NOT EXISTS chat_attachments (sessionId TEXT NOT NULL,sourceId TEXT NOT NULL,addedAt INTEGER NOT NULL,PRIMARY KEY(sessionId,sourceId),FOREIGN KEY(sessionId) REFERENCES chat_sessions(id) ON UPDATE NO ACTION ON DELETE CASCADE,FOREIGN KEY(sourceId) REFERENCES nodes(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_attachments_sourceId ON chat_attachments(sourceId)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS ai_workflows (id TEXT NOT NULL PRIMARY KEY,sessionId TEXT NOT NULL,approval TEXT NOT NULL,status TEXT NOT NULL,plan TEXT NOT NULL,results TEXT NOT NULL,inputs TEXT NOT NULL,log TEXT NOT NULL,error TEXT NOT NULL,organizeTaskId TEXT,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL,FOREIGN KEY(sessionId) REFERENCES chat_sessions(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_workflows_sessionId ON ai_workflows(sessionId)")
+            db.execSQL("ALTER TABLE chat_messages ADD COLUMN referenceText TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE chat_messages ADD COLUMN workflowId TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE content_results ADD COLUMN diagnostics TEXT NOT NULL DEFAULT ''")
+        }}
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, profileId TEXT NOT NULL, reasoning TEXT NOT NULL, draft TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")

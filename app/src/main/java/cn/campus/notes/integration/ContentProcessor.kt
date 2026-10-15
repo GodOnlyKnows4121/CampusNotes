@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.first
 import java.util.concurrent.ConcurrentHashMap
 
 /** Process-scoped jobs survive Activity recreation; unfinished persisted jobs are interrupted on restart. */
-class ContentProcessor(context: Context, private val repo: LocalRepository, private val settings: SettingsStore,
+class ContentProcessor(private val context: Context, private val repo: LocalRepository, private val settings: SettingsStore,
     private val parser: ((java.io.File, LibraryNode) -> String)? = null,
     private val recognizer: (ProviderCredentials) -> RecognitionProvider = { RecognitionProvider(it) }) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -21,36 +21,50 @@ class ContentProcessor(context: Context, private val repo: LocalRepository, priv
         catch (e: Exception) { ready.completeExceptionally(e) }
     } }
 
-    fun start(sourceId: String, kind: String, expected: ProviderConfig? = null): Job {
+    private data class Attempt(val id:String,val job:Job,val owned:Boolean)
+    fun start(sourceId: String, kind: String, expected: ProviderConfig? = null): Job = begin(sourceId,kind,expected).job
+    suspend fun processForWorkflow(source:WorkflowSource,kind:String,expected:ProviderConfig?,credentials:ProviderCredentials?,file:java.io.File):ContentResult {
+        require(file.canonicalFile.parentFile==java.io.File(context.cacheDir,"workflow-sources").canonicalFile){"无效的任务快照"}
+        val attempt=begin(source.id,kind,expected,credentials,file,source.stamp)
+        require(attempt.owned){"该原件已有处理任务，请完成或取消后重新发起联动"}
+        try{attempt.job.join()}catch(e:CancellationException){withContext(NonCancellable){attempt.job.cancelAndJoin()};throw e}
+        val result=repo.db.content().result(attempt.id)?:error("未取得本次识别结果")
+        require(result.status=="review"){result.detail.ifBlank{"本次处理未完整完成"}}
+        return result
+    }
+    private fun begin(sourceId: String, kind: String, expected: ProviderConfig? = null,overrideCredentials:ProviderCredentials?=null,
+        snapshot:java.io.File?=null,expectedStamp:String?=null):Attempt {
         require(kind in setOf("parse", "asr", "ocr"))
+        val resultId=newId()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var result: ContentResult? = null
             try {
                 ready.await()
                 val source = source(sourceId)
-                result = ContentResult(sourceId = sourceId, kind = kind)
+                result = ContentResult(id=resultId,sourceId = sourceId, kind = kind)
                 persist(result!!)
                 val providerKind = when(kind) { "asr" -> ProviderKind.ASR; "ocr" -> ProviderKind.OCR; else -> null }
                 val credentials = providerKind?.let { p ->
                     val current = settings.data.first().providers[p] ?: ProviderConfig()
                     require(expected != null && current == expected) { "识别配置已改变，请重新查看上传内容后确认" }
                     RecognitionConfiguration.validate(p,current.endpoint,current.model)
-                    settings.credentials(p)
+                    overrideCredentials?:settings.credentials(p)
                 }
                 result = result!!.copy(provider = credentials?.let { "${it.endpoint}\n${it.model}" } ?: "本机解析")
                 persist(result!!)
-                val file = repo.document(source.localName ?: error("原件本地副本缺失"))
+                val file = snapshot?:repo.document(source.localName ?: error("原件本地副本缺失"))
                 val limit = when(kind) { "parse" -> 20_000_000; "asr" -> 512_000_000; else -> RecognitionProvider.MAX_INPUT }
                 require(file.isFile && file.length() in 1..limit.toLong()) {
                     if (kind == "parse") "本机解析上限 20 MB，原件保留" else "音频原件上限 512 MB，图片上限 7 MB；原件保留"
                 }
                 val stamp = repo.sourceStamp(source)
+                require(expectedStamp==null||expectedStamp==stamp){"原件版本已改变，本次未上传"}
                 result = result!!.copy(status = "running", sourceStamp = stamp,
                     detail=if(kind=="ocr")"正在发送并等待图片识别完整结果，单次最多约5.5分钟；可取消，不自动重试，原件保留" else "")
                 persist(result!!)
                 val text = if (credentials == null) parser?.invoke(file, source) ?: localParser.extract(file, source) { coroutineContext.ensureActive() } else {
                     val adapter = recognizer(credentials)
-                    if (kind == "asr") {
+                    try { if (kind == "asr") {
                         val output = StringBuilder()
                         audioSegments.transcribe(file, processingMime(source)) { bytes, mime, index, offset ->
                             val part = adapter.transcribe(bytes, mime)
@@ -61,6 +75,7 @@ class ContentProcessor(context: Context, private val repo: LocalRepository, priv
                         }
                         output.toString()
                     } else adapter.recognize(file.inputStream().use { it.readBytesBounded(RecognitionProvider.MAX_INPUT) }, processingMime(source))
+                    }finally{result=result!!.copy(diagnostics=adapter.lastDiagnostics)}
                 }
                 ensureActive()
                 require(text.isNotBlank() && text.length <= DocumentParser.MAX_TEXT) { "处理结果为空或超过文字上限" }
@@ -77,10 +92,10 @@ class ContentProcessor(context: Context, private val repo: LocalRepository, priv
             }
         }
         val existing = jobs.putIfAbsent(sourceId, job)
-        if (existing != null) { job.cancel(); return existing }
+        if (existing != null) { job.cancel(); return Attempt("",existing,false) }
         job.invokeOnCompletion { jobs.remove(sourceId, job) }
         job.start()
-        return job
+        return Attempt(resultId,job,true)
     }
     fun cancel(sourceId: String) { jobs[sourceId]?.cancel() }
     suspend fun shutdown() { scope.coroutineContext[Job]?.cancelAndJoin() }

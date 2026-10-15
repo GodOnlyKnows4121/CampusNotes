@@ -70,6 +70,16 @@ class SettingsStore(context: Context, private val cipher: KeyCipher = KeyCipher(
             try { val list=org.json.JSONArray(p[profiles]?:"[]"); (0 until list.length()).map { i -> val j=list.getJSONObject(i);val id=j.getString("id");ChatModelProfile(id,j.getString("title"),j.getString("endpoint"),j.getString("model"),!p[profileKey(id)].isNullOrBlank()) } } catch(_:Exception){emptyList()},
         p[activeChat]?:LEGACY_CHAT) }
     suspend fun activeChatSession(id: String) { store.edit { it[activeChat]=id } }
+    // Opaque version of metadata + ciphertext, never a hash of the plaintext API key.
+    private fun revision(vararg values:String)=java.security.MessageDigest.getInstance("SHA-256").digest(
+        org.json.JSONArray(values.toList()).toString().toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
+    suspend fun serviceRevision(kind:ProviderKind):String {val p=store.data.first();return revision(p[field(kind,"endpoint")].orEmpty(),p[field(kind,"model")].orEmpty(),p[field(kind,"key")].orEmpty())}
+    suspend fun chatRevision(id:String):String {
+        if(id==LEGACY_CHAT)return serviceRevision(ProviderKind.DEEPSEEK)
+        val p=store.data.first();val list=org.json.JSONArray(p[profiles]?:"[]")
+        val item=(0 until list.length()).map{list.getJSONObject(it)}.find{it.getString("id")==id}?:error("语言模型配置已移除")
+        return revision(item.getString("endpoint"),item.getString("model"),p[profileKey(id)].orEmpty())
+    }
     suspend fun saveChatProfile(id: String, title: String, endpoint: String, model: String, newKey: String, removeKey: Boolean) {
         require(Regex("[a-f0-9-]{36}").matches(id)) { "无效的模型配置引用" }
         require(title.isNotBlank()&&title.length<=60&&endpoint.isNotBlank()&&endpoint.length<=2048&&model.isNotBlank()&&model.length<=200) { "请填写名称、HTTPS 地址及实际模型名" }

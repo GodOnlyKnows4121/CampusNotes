@@ -24,6 +24,7 @@ class DeviceSmokeTest {
     private lateinit var data: LocalData
     private lateinit var originalSession: String
     private val ownedSessions = mutableListOf<String>()
+    private val ownedSources = mutableListOf<LibraryNode>()
     @Before fun readExistingDatabase() {
         instrumentation.uiAutomation.executeShellCommand(
             "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n cn.campus.notes/.MainActivity"
@@ -61,6 +62,10 @@ class DeviceSmokeTest {
         instrumentation.waitForIdleSync()
         runBlocking {
             ownedSessions.forEach { id -> app.database.sessions().clear(id); app.database.sessions().delete(id) }
+            ownedSources.forEach { node ->
+                app.database.content().deleteSources(listOf(node.id));app.database.dao().deleteNode(node.id)
+                node.localName?.let { app.repository.document(it).delete() }
+            }
             if (::originalSession.isInitialized) app.settings.activeChatSession(originalSession)
         }
     }
@@ -93,6 +98,47 @@ class DeviceSmokeTest {
         compose.onNodeWithTag("ai_draft").assertTextContains("第二会话草稿")
         val app=activity.application as CampusApplication
         org.junit.Assert.assertTrue(runBlocking{app.database.sessions().messages(first).isEmpty()&&app.database.sessions().messages(second).isEmpty()})
+    }
+
+    @Test fun syntheticAttachmentAndReviewGateWorkWithoutModelCalls() {
+        val app=activity.application as CampusApplication
+        val vm=ViewModelProvider(activity)[CampusViewModel::class.java]
+        val source=runBlocking {
+            val node=LibraryNode(parentId=app.repository.inboxTopic(),kind=NodeKind.ORIGINAL,title="联动界面测试.txt",mime="text/plain",localName=newId(),bytes=12)
+            ownedSources+=node
+            app.repository.document(node.localName!!).writeText("Synthetic UI")
+            app.repository.saveNode(node);node
+        }
+        compose.waitUntil(15_000){vm.data.value.nodes.any{it.id==source.id}}
+        compose.onNodeWithTag("nav_AI").performClick()
+        compose.onNodeWithTag("ai_attach").performClick()
+        compose.onNodeWithTag("attach_${source.id}").performScrollTo().performClick()
+        compose.waitUntil(15_000){vm.attachments.value.any{it.sourceId==source.id}&&!vm.busy.value}
+        compose.onNodeWithText("完成（1/10）").performClick()
+        compose.onNodeWithTag("attached_${source.id}").assertIsDisplayed()
+        compose.onNodeWithTag("nav_HOME").performClick();compose.onNodeWithTag("nav_AI").performClick()
+        compose.onNodeWithTag("attached_${source.id}").assertIsDisplayed().performClick()
+        compose.waitUntil(15_000){vm.attachments.value.none{it.sourceId==source.id}&&!vm.busy.value}
+        val model=WorkflowModel(LEGACY_CHAT,"https://example.invalid/v1","synthetic-model","fixture")
+        val approval=WorkflowApproval(sessionId=vm.activeChat.value,mode="chat",prompt="合成资料核对测试",chat=model,reasoning="default",asr=model,ocr=model,
+            sources=listOf(WorkflowSource(source.id,source.title,source.mime,source.bytes,source.parentId,app.repository.sourceStamp(source),"parse")))
+        val result=ContentResult(sourceId=source.id,sourceStamp=approval.sources.single().stamp,kind="parse",status="review",text="Synthetic UI")
+        runBlocking{
+            app.database.content().save(result)
+            app.database.workflows().insert(AiWorkflow(approval.id,approval.sessionId,approval.json().toString(),status="review",results=WorkflowResult.encode(listOf(WorkflowResult(source.id,"parse",result.id)))))
+        }
+        compose.waitUntil(15_000){vm.workflows.value.any{it.id==approval.id}&&vm.contentResults.value.any{it.id==result.id}}
+        compose.onNodeWithText("核对文字并继续").performScrollTo().performClick()
+        compose.onNodeWithTag("resume_workflow").assertIsNotEnabled()
+        compose.onNodeWithTag("workflow_review_${result.id}").performScrollTo().performClick()
+        compose.onNodeWithTag("content_text").performScrollTo().performTextReplacement("Synthetic UI confirmed")
+        compose.onNodeWithTag("confirm_content").performClick()
+        compose.waitUntil(15_000){vm.contentResults.value.any{it.id==result.id&&it.status=="confirmed"}&&!vm.busy.value}
+        compose.onNodeWithTag("resume_workflow").assertIsEnabled()
+        compose.onNodeWithText("取消待核对任务").performScrollTo().performClick()
+        compose.waitUntil(15_000){vm.workflows.value.any{it.id==approval.id&&it.status=="cancelled"}&&!vm.busy.value}
+        org.junit.Assert.assertTrue(runBlocking{app.database.sessions().messages(approval.sessionId).isEmpty()})
+        org.junit.Assert.assertEquals("Synthetic UI",app.repository.document(source.localName!!).readText())
     }
 
     @Test fun launchNavigationDraftAndActivityRecreationWork() {

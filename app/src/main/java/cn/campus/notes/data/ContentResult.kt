@@ -9,7 +9,8 @@ data class ContentResult(
     @PrimaryKey val id: String = newId(), val sourceId: String, val sourceStamp: String = "",
     val kind: String, val status: String = "waiting", val text: String = "", val detail: String = "",
     val provider: String = "", val outputNoteId: String? = null,
-    val createdAt: Long = System.currentTimeMillis(), val updatedAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(), val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue="''") val diagnostics:String=""
 )
 
 @Dao

@@ -18,6 +18,8 @@ import kotlin.coroutines.resumeWithException
  * No remote URLs, automatic retries, redirects or server error bodies are used. */
 class RecognitionProvider(private val credentials: ProviderCredentials,
     private val client: OkHttpClient? = null) : SpeechRecognizer, TextRecognizer {
+    @Volatile private var trace:RecognitionTrace?=null
+    val lastDiagnostics:String get()=trace?.json().orEmpty()
     override suspend fun transcribe(audio: ByteArray, mime: String): String {
         RecognitionConfiguration.validate(ProviderKind.ASR,credentials.endpoint,credentials.model)
         require(mime in AUDIO_MIMES) { "此音频格式尚未接入 ASR，请使用 M4A、MP3、WAV、FLAC 或 OGG" }
@@ -36,6 +38,7 @@ class RecognitionProvider(private val credentials: ProviderCredentials,
         return "data:$mime;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
     private suspend fun request(kind:ProviderKind,content: JSONArray): String = suspendCancellableCoroutine { continuation ->
+        val observation=RecognitionTrace();trace=observation
         try {
             require(credentials.model.isNotBlank()) { "请填写支持识别的实际模型名称" }
             require(credentials.key.isNotBlank() && credentials.key.all { it in '!'..'~' }) { "API 密钥格式无效" }
@@ -44,11 +47,13 @@ class RecognitionProvider(private val credentials: ProviderCredentials,
             val request = Request.Builder().url(DeepSeekProvider.completionUrl(credentials.endpoint))
                 .header("Authorization", "Bearer ${credentials.key}")
                 .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).build()
-            val call = (client ?: if(kind==ProviderKind.OCR)ocrClient else DeepSeekProvider.defaultClient).newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
+            val base=client ?: if(kind==ProviderKind.OCR)ocrClient else DeepSeekProvider.defaultClient
+            val transport=base.newBuilder().eventListenerFactory{call->observation.listener(base.eventListenerFactory.create(call))}.build()
+            val call = transport.newCall(request)
+            continuation.invokeOnCancellation { observation.finish("cancelled");call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(networkFailure(e))
+                    if (continuation.isActive) continuation.resumeWithException(networkFailure(e,observation))
                 }
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
@@ -73,15 +78,17 @@ class RecognitionProvider(private val credentials: ProviderCredentials,
                                 else -> throw AiFailure("识别服务未返回文字")
                             }.trim()
                             require(text.isNotEmpty() && text.length <= DocumentParser.MAX_TEXT) { "识别文字为空或超过 60000 字，请检查或拆分原件" }
+                            observation.finish("complete")
                             if (continuation.isActive) continuation.resume(text)
                         } catch (e: Exception) {
-                            val safe = when(e){is AiFailure->e;is IOException->networkFailure(e);else->AiFailure("识别响应格式无效、不完整或超过处理上限，请核对服务能力；原件保留")}
+                            observation.finish(if(e is IOException&&e !is AiFailure)"transport_failure" else "rejected")
+                            val safe = when(e){is AiFailure->e;is IOException->networkFailure(e,observation);else->AiFailure("识别响应格式无效、不完整或超过处理上限，请核对服务能力；原件保留")}
                             if (continuation.isActive) continuation.resumeWithException(safe)
                         }
                     }
                 }
             })
-        } catch (e: Exception) { if (continuation.isActive) continuation.resumeWithException(e) }
+        } catch (e: Exception) { observation.finish("configuration_error");if (continuation.isActive) continuation.resumeWithException(e) }
     }
     companion object {
         const val OCR_READ_SECONDS=300L
@@ -89,9 +96,9 @@ class RecognitionProvider(private val credentials: ProviderCredentials,
         /** Non-streaming vision may wait for a full result; cancellation remains immediate. */
         val ocrClient:OkHttpClient=DeepSeekProvider.defaultClient.newBuilder()
             .readTimeout(OCR_READ_SECONDS,TimeUnit.SECONDS).callTimeout(OCR_CALL_SECONDS,TimeUnit.SECONDS).build()
-        private fun networkFailure(error:IOException)=AiFailure(if(error is java.io.InterruptedIOException)
+        private fun networkFailure(error:IOException,trace:RecognitionTrace)=AiFailure((if(error is java.io.InterruptedIOException)
             "识别连接或响应超时；本次未取得完整结果，原件保留，不会自动重试"
-            else "识别网络连接失败；本次未取得完整结果，原件保留，请检查网络与配置")
+            else "识别网络连接失败；本次未取得完整结果，原件保留，请检查网络与配置")+"（${trace.summary()}）")
         const val MAX_INPUT = 7_000_000
         val AUDIO_MIMES = setOf("audio/mp4", "audio/m4a", "audio/x-m4a", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/flac", "audio/ogg", "audio/opus", "audio/aac")
     }

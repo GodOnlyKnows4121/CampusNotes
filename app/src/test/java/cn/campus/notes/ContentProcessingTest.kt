@@ -201,7 +201,7 @@ class ContentProcessingTest {
             raw.execSQL("INSERT INTO trash_entries VALUES ('trash','note','保留回收站','{}',1)")
             raw.version = 3
         }
-        val upgraded = Room.databaseBuilder(context,CampusDatabase::class.java,file.name).addMigrations(CampusDatabase.MIGRATION_3_4,CampusDatabase.MIGRATION_4_5).build()
+        val upgraded = Room.databaseBuilder(context,CampusDatabase::class.java,file.name).addMigrations(CampusDatabase.MIGRATION_3_4,CampusDatabase.MIGRATION_4_5, CampusDatabase.MIGRATION_5_6).build()
         try {
             assertEquals("保留待办", upgraded.features().allTodos().single().title)
             assertEquals("course", upgraded.features().allLinks().single().courseId)

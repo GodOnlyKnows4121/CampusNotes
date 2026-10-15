@@ -11,8 +11,8 @@ android {
         applicationId = "cn.campus.notes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.6.2-ocr-timeout"
+        versionCode = 10
+        versionName = "0.7.0-workflows"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }

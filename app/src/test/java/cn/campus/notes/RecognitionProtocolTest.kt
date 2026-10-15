@@ -126,4 +126,16 @@ class RecognitionProtocolTest {
         withTimeout(2000){while(waiting.dispatcher.runningCallsCount()!=0)delay(10)}
         assertEquals(1,server.requestCount)
     } }
+    @Test fun persistedDiagnosticsDistinguishResponseReadTimeoutWithoutSensitiveData() = tls { server,client -> runBlocking {
+        server.enqueue(reply().setBodyDelay(1500,TimeUnit.MILLISECONDS))
+        val bounded=client.newBuilder().readTimeout(300,TimeUnit.MILLISECONDS).callTimeout(3000,TimeUnit.MILLISECONDS).build()
+        val recognizer=adapter(server,bounded)
+        try{recognizer.recognize(byteArrayOf(1),"image/png");fail()}catch(e:AiFailure){assertTrue(e.message!!.contains("超时"))}
+        val json=JSONObject(recognizer.lastDiagnostics)
+        assertEquals("接收服务结果",json.getString("phase"));assertEquals(200,json.getInt("httpStatus"));assertEquals("transport_failure",json.getString("outcome"))
+        assertEquals(setOf("phase","elapsedMs","outcome","httpStatus"),json.keys().asSequence().toSet())
+        assertFalse(recognizer.lastDiagnostics.contains("test-only-token"));assertFalse(recognizer.lastDiagnostics.contains("localhost"))
+        val elapsed=json.getLong("elapsedMs");assertEquals(elapsed,JSONObject(recognizer.lastDiagnostics).getLong("elapsedMs"))
+        assertEquals(1,server.requestCount)
+    } }
 }
