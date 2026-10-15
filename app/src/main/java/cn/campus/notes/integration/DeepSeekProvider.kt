@@ -21,16 +21,17 @@ class AiFailure(message: String) : IOException(message)
 
 /** HTTPS only, no redirects or automatic retries, and no body/credential logging. */
 class DeepSeekProvider(private val credentials: ProviderCredentials,
-    private val client: OkHttpClient = defaultClient) : AiProvider {
+    private val client: OkHttpClient = defaultClient, private val reasoning: String = "default") : AiProvider {
     override fun streamReply(messages: List<PromptMessage>, json: Boolean): Flow<String> = callbackFlow {
         val url = completionUrl(credentials.endpoint)
         require(credentials.model.isNotBlank()) { "请填写模型名称" }
         require(credentials.key.isNotBlank() && credentials.key.all { it in '!'..'~' }) { "API 密钥格式无效" }
-        val payload = JSONObject().put("model", credentials.model).put("stream", true).put("max_tokens", 4096)
+        val payload = JSONObject().put("model", credentials.model).put("stream", true)
             .put("messages", JSONArray().apply { messages.forEach {
                 put(JSONObject().put("role", it.role).put("content", it.content))
             } })
-        if (url.host == "api.deepseek.com") payload.put("thinking", JSONObject().put("type", "disabled"))
+        if(!ModelCapabilities.deepSeekThinking(credentials.endpoint,credentials.model))payload.put("max_tokens",4096)
+        ModelCapabilities.apply(payload,credentials.endpoint,credentials.model,reasoning)
         if (json) payload.put("response_format", JSONObject().put("type", "json_object"))
         val call = client.newCall(Request.Builder().url(url).header("Authorization", "Bearer ${credentials.key}")
             .header("Accept", "text/event-stream")

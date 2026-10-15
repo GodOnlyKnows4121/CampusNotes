@@ -105,7 +105,7 @@ class AiPersistenceTest {
             raw.execSQL("INSERT INTO nodes VALUES ('old-group', NULL, 'group', '原有大组', '旧规则', NULL, 'text/plain', 0, 0)")
             raw.version = 1
         }
-        val upgraded = Room.databaseBuilder(context, CampusDatabase::class.java, file.name).addMigrations(CampusDatabase.MIGRATION_1_2, CampusDatabase.MIGRATION_2_3, CampusDatabase.MIGRATION_3_4).build()
+        val upgraded = Room.databaseBuilder(context, CampusDatabase::class.java, file.name).addMigrations(CampusDatabase.MIGRATION_1_2, CampusDatabase.MIGRATION_2_3, CampusDatabase.MIGRATION_3_4, CampusDatabase.MIGRATION_4_5).build()
         try {
             assertEquals("升级保留", upgraded.dao().notes().single().body)
             assertEquals("旧规则", upgraded.dao().nodes().single().rule)

@@ -29,16 +29,25 @@ data class LibraryNode(@PrimaryKey val id: String = newId(), val parentId: Strin
     val kind: String, val title: String, val rule: String = "", val localName: String? = null,
     val mime: String = "application/octet-stream", val bytes: Long = 0, val example: Boolean = false)
 
-@Entity(tableName = "chat_messages")
+@Entity(tableName = "chat_messages", indices = [Index("sessionId")])
 data class ChatMessage(@PrimaryKey(autoGenerate = true) val id: Long = 0,
     val role: String, val content: String, val status: String = "complete", val detail: String = "",
-    val createdAt: Long = System.currentTimeMillis())
+    val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "'legacy'") val sessionId: String = LEGACY_CHAT,
+    @ColumnInfo(defaultValue = "''") val modelName: String = "",
+    @ColumnInfo(defaultValue = "'legacy'") val profileId: String = LEGACY_CHAT,
+    @ColumnInfo(defaultValue = "'default'") val reasoning: String = "default",
+    @ColumnInfo(defaultValue = "''") val endpoint: String = "")
 
 @Entity(tableName = "organize_tasks")
 data class OrganizeTask(@PrimaryKey val id: String = newId(), val topicId: String,
     val topicTitle: String, val rule: String, val sources: String, val sourceStamp: String,
     val title: String = "", val body: String = "", val status: String = "planning",
-    val detail: String = "", val outputId: String? = null, val createdAt: Long = System.currentTimeMillis())
+    val detail: String = "", val outputId: String? = null, val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "''") val modelName: String = "",
+    @ColumnInfo(defaultValue = "''") val endpoint: String = "",
+    @ColumnInfo(defaultValue = "'legacy'") val profileId: String = LEGACY_CHAT,
+    @ColumnInfo(defaultValue = "'default'") val reasoning: String = "default")
 
 data class LocalData(val notes: List<Note> = emptyList(), val courses: List<LocalCourse> = emptyList(),
     val nodes: List<LibraryNode> = emptyList()) {
@@ -73,12 +82,29 @@ interface CampusDao {
 }
 
 @Database(entities = [Note::class, LocalCourse::class, LibraryNode::class, ChatMessage::class, OrganizeTask::class,
-    Semester::class, CoursePlacement::class, CampusTodo::class, RecordLink::class, TrashEntry::class, ContentResult::class], version = 4, exportSchema = true)
+    Semester::class, CoursePlacement::class, CampusTodo::class, RecordLink::class, TrashEntry::class, ContentResult::class, ChatSession::class], version = 5, exportSchema = true)
 abstract class CampusDatabase : RoomDatabase() {
     abstract fun dao(): CampusDao
     abstract fun features(): FeatureDao
     abstract fun content(): ContentDao
+    abstract fun sessions(): ChatSessionDao
     companion object {
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, profileId TEXT NOT NULL, reasoning TEXT NOT NULL, draft TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")
+                db.execSQL("INSERT INTO chat_sessions SELECT 'legacy','历史会话','legacy','default','',COALESCE(MIN(createdAt),0),COALESCE(MAX(createdAt),0) FROM chat_messages")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN sessionId TEXT NOT NULL DEFAULT 'legacy'")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN modelName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN profileId TEXT NOT NULL DEFAULT 'legacy'")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN reasoning TEXT NOT NULL DEFAULT 'default'")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN endpoint TEXT NOT NULL DEFAULT ''")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_messages_sessionId ON chat_messages(sessionId)")
+                db.execSQL("ALTER TABLE organize_tasks ADD COLUMN modelName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE organize_tasks ADD COLUMN endpoint TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE organize_tasks ADD COLUMN profileId TEXT NOT NULL DEFAULT 'legacy'")
+                db.execSQL("ALTER TABLE organize_tasks ADD COLUMN reasoning TEXT NOT NULL DEFAULT 'default'")
+            }
+        }
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS content_results (id TEXT NOT NULL PRIMARY KEY, sourceId TEXT NOT NULL, sourceStamp TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, text TEXT NOT NULL, detail TEXT NOT NULL, provider TEXT NOT NULL, outputNoteId TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")

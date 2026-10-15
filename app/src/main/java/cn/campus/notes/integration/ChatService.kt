@@ -10,14 +10,20 @@ import kotlinx.coroutines.withContext
 class ChatService(private val db: CampusDatabase,
     private val credentials: suspend () -> ProviderCredentials,
     private val provider: (ProviderCredentials) -> AiProvider = { DeepSeekProvider(it) }) {
-    suspend fun send(question: String, update: (String) -> Unit = {}, accepted: suspend () -> Unit = {}) {
+    suspend fun send(question: String, update: (String) -> Unit = {}, accepted: suspend () -> Unit = {},
+        sessionId: String = LEGACY_CHAT, profileId: String = LEGACY_CHAT, reasoning: String = "default") {
         require(question.isNotBlank() && question.length <= 8000) { "请输入 1–8000 字的问题" }
-        val client = provider(credentials()) // Fail before storing a message if configuration is missing.
-        val history = db.dao().chat()
+        val frozen = credentials()
+        ModelCapabilities.apply(org.json.JSONObject(),frozen.endpoint,frozen.model,reasoning)
+        val client = provider(frozen) // Fail before storing a message if configuration is missing.
+        if(sessionId==LEGACY_CHAT&&db.sessions().session(sessionId)==null)db.sessions().insert(ChatSession(LEGACY_CHAT,"默认会话"))
+        val history = db.sessions().messages(sessionId)
         val prompt = context(history, question.trim())
         val reply = db.withTransaction {
-            db.dao().insert(ChatMessage(role = "user", content = question.trim()))
-            val message = ChatMessage(role = "assistant", content = "", status = "streaming")
+            require(db.sessions().session(sessionId)!=null){"会话已删除，本次未发送"}
+            db.dao().insert(ChatMessage(role = "user", content = question.trim(), sessionId = sessionId,profileId=profileId,reasoning=reasoning,modelName=frozen.model,endpoint=frozen.endpoint))
+            db.sessions().touch(sessionId,System.currentTimeMillis())
+            val message = ChatMessage(role = "assistant", content = "", status = "streaming", sessionId=sessionId,profileId=profileId,reasoning=reasoning,modelName=frozen.model,endpoint=frozen.endpoint)
             message.copy(id = db.dao().insert(message))
         }
         val text = StringBuilder()
@@ -29,17 +35,20 @@ class ChatService(private val db: CampusDatabase,
                 update(text.toString())
                 val now = System.nanoTime()
                 if (now - lastSave > 200_000_000) {
-                    db.dao().save(reply.copy(content = text.toString())); lastSave = now
+                    persist(reply.copy(content = text.toString())); lastSave = now
                 }
             }
-            db.dao().save(reply.copy(content = text.toString(), status = "complete"))
+            persist(reply.copy(content = text.toString(), status = "complete"))
         } catch (e: Exception) {
             withContext(NonCancellable) {
-                db.dao().save(reply.copy(content = text.toString(), status = if (e is CancellationException) "cancelled" else "error",
+                persist(reply.copy(content = text.toString(), status = if (e is CancellationException) "cancelled" else "error",
                     detail = if (e is CancellationException) "已停止，部分回复不进入后续对话上下文" else safeMessage(e)))
             }
             throw e
         }
+    }
+    private suspend fun persist(row: ChatMessage) = db.withTransaction {
+        if(db.sessions().session(row.sessionId)!=null&&db.sessions().hasMessage(row.id,row.sessionId))db.dao().save(row)
     }
     companion object {
         fun safeMessage(e: Exception): String = when (e) {

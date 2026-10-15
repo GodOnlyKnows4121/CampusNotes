@@ -18,8 +18,10 @@ import javax.crypto.spec.GCMParameterSpec
 private val Context.settingsDataStore by preferencesDataStore(name = "settings")
 enum class ProviderKind(val label: String) { DEEPSEEK("DeepSeek"), ASR("语音识别 ASR"), OCR("文字识别 OCR") }
 data class ProviderConfig(val endpoint: String = "", val model: String = "", val hasKey: Boolean = false)
+data class ChatModelProfile(val id: String, val title: String, val endpoint: String, val model: String, val hasKey: Boolean)
 data class LocalSettings(val providers: Map<ProviderKind,ProviderConfig> = emptyMap(), val sandboxEnabled: Boolean = false,
-    val activeSemester: String? = null, val groupModes: Map<String,String> = emptyMap())
+    val activeSemester: String? = null, val groupModes: Map<String,String> = emptyMap(),
+    val chatProfiles: List<ChatModelProfile> = emptyList(), val activeChatSession: String = LEGACY_CHAT)
 
 /** Only authenticated ciphertext enters DataStore; key material stays in Android Keystore. */
 class KeyCipher {
@@ -32,18 +34,22 @@ class KeyCipher {
                 .setKeySize(256).build())
         }.generateKey()
     }
-    fun encrypt(value: String, provider: ProviderKind): String {
+    fun encrypt(value: String, provider: ProviderKind): String = encryptBound(value,provider.name)
+    fun decrypt(value: String, provider: ProviderKind): String = decryptBound(value,provider.name)
+    fun encryptProfile(value: String, id: String): String = encryptBound(value,"CHAT_PROFILE:$id")
+    fun decryptProfile(value: String, id: String): String = decryptBound(value,"CHAT_PROFILE:$id")
+    private fun encryptBound(value: String, scope: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
-        cipher.updateAAD(provider.name.toByteArray(Charsets.UTF_8))
+        cipher.updateAAD(scope.toByteArray(Charsets.UTF_8))
         val bytes = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
         return Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
-    fun decrypt(value: String, provider: ProviderKind): String {
+    private fun decryptBound(value: String, scope: String): String {
         val parts = value.split(':'); require(parts.size == 2)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)))
-        cipher.updateAAD(provider.name.toByteArray(Charsets.UTF_8))
+        cipher.updateAAD(scope.toByteArray(Charsets.UTF_8))
         return String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
     }
 }
@@ -54,9 +60,45 @@ class SettingsStore(context: Context, private val cipher: KeyCipher = KeyCipher(
     private val sandbox = booleanPreferencesKey("sandboxEnabled")
     private val semester = stringPreferencesKey("activeSemester")
     private val modes = stringPreferencesKey("groupModes")
+    private val profiles = stringPreferencesKey("chatProfiles")
+    private val activeChat = stringPreferencesKey("activeChatSession")
+    private fun profileKey(id: String) = stringPreferencesKey("CHAT_PROFILE.$id.key")
     val data = store.data.map { p -> LocalSettings(ProviderKind.entries.associateWith { k ->
         ProviderConfig(p[field(k,"endpoint")] ?: "", p[field(k,"model")] ?: "", !p[field(k,"key")].isNullOrBlank())
-    }, p[sandbox] ?: false, p[semester], try { val json=org.json.JSONObject(p[modes]?:"{}"); json.keys().asSequence().associateWith { json.getString(it) } } catch (_: Exception) { emptyMap() }) }
+    }, p[sandbox] ?: false, p[semester], try { val json=org.json.JSONObject(p[modes]?:"{}"); json.keys().asSequence().associateWith { json.getString(it) } } catch (_: Exception) { emptyMap() },
+        listOf(ChatModelProfile(LEGACY_CHAT,"默认 DeepSeek",p[field(ProviderKind.DEEPSEEK,"endpoint")]?:"",p[field(ProviderKind.DEEPSEEK,"model")]?:"",!p[field(ProviderKind.DEEPSEEK,"key")].isNullOrBlank())) +
+            try { val list=org.json.JSONArray(p[profiles]?:"[]"); (0 until list.length()).map { i -> val j=list.getJSONObject(i);val id=j.getString("id");ChatModelProfile(id,j.getString("title"),j.getString("endpoint"),j.getString("model"),!p[profileKey(id)].isNullOrBlank()) } } catch(_:Exception){emptyList()},
+        p[activeChat]?:LEGACY_CHAT) }
+    suspend fun activeChatSession(id: String) { store.edit { it[activeChat]=id } }
+    suspend fun saveChatProfile(id: String, title: String, endpoint: String, model: String, newKey: String, removeKey: Boolean) {
+        require(Regex("[a-f0-9-]{36}").matches(id)) { "无效的模型配置引用" }
+        require(title.isNotBlank()&&title.length<=60&&endpoint.isNotBlank()&&endpoint.length<=2048&&model.isNotBlank()&&model.length<=200) { "请填写名称、HTTPS 地址及实际模型名" }
+        validateEndpoint(endpoint);require(newKey.length<=8192){"密钥长度异常"}
+        val encrypted=if(newKey.isNotBlank()&&!removeKey)cipher.encryptProfile(newKey.trim(),id)else null
+        store.edit { p ->
+            val list=org.json.JSONArray(p[profiles]?:"[]");val updated=org.json.JSONArray()
+            for(i in 0 until list.length())if(list.getJSONObject(i).getString("id")!=id)updated.put(list.getJSONObject(i))
+            updated.put(org.json.JSONObject().put("id",id).put("title",title.trim()).put("endpoint",endpoint.trim()).put("model",model.trim()))
+            p[profiles]=updated.toString()
+            if(removeKey)p.remove(profileKey(id))else if(encrypted!=null)p[profileKey(id)]=encrypted
+        }
+    }
+    suspend fun deleteChatProfile(id: String) {
+        require(id!=LEGACY_CHAT&&Regex("[a-f0-9-]{36}").matches(id)){"默认服务不能从这里移除"}
+        store.edit { p->val list=org.json.JSONArray(p[profiles]?:"[]");val kept=org.json.JSONArray()
+            for(i in 0 until list.length())if(list.getJSONObject(i).getString("id")!=id)kept.put(list.getJSONObject(i))
+            p[profiles]=kept.toString();p.remove(profileKey(id))
+        }
+    }
+    suspend fun chatCredentials(id: String): ProviderCredentials {
+        if(id==LEGACY_CHAT)return credentials(ProviderKind.DEEPSEEK)
+        val p=store.data.first();val list=org.json.JSONArray(p[profiles]?:"[]")
+        val item=(0 until list.length()).map{list.getJSONObject(it)}.find{it.getString("id")==id}?:error("该模型配置已移除，请重新选择")
+        val encrypted=p[profileKey(id)]
+        require(!encrypted.isNullOrBlank()){ "请先保存所选模型的 API 密钥" }
+        val key=try{cipher.decryptProfile(encrypted,id)}catch(_:Exception){throw IllegalStateException("所选模型密钥无法解密，请重新保存")}
+        return ProviderCredentials(item.getString("endpoint"),item.getString("model"),key)
+    }
     suspend fun activeSemester(id: String?) { store.edit { if(id==null) it.remove(semester) else it[semester]=id } }
     suspend fun groupMode(id: String, mode: String) { require(mode in listOf("课堂模式","项目模式","自定义模式")); store.edit { val json=org.json.JSONObject(it[modes]?:"{}"); json.put(id,mode); it[modes]=json.toString() } }
     suspend fun save(kind: ProviderKind, endpoint: String, model: String, newKey: String, removeKey: Boolean) {

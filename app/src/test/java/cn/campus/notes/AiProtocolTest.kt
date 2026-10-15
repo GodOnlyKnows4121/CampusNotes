@@ -78,6 +78,23 @@ class AiProtocolTest {
             .streamReply(listOf(PromptMessage("user", "问题"))).toList().joinToString("") } }
         assertEquals("中文跨帧", result)
     }
+    @Test fun officialThinkingLevelsReachHttpsPayloadWithoutChangingAnswerBudget() = tlsServer { server, client ->
+        // Rewrite only in this test: exercise official capability matching without contacting a vendor.
+        val redirected=client.newBuilder().addInterceptor { chain ->
+            chain.proceed(chain.request().newBuilder().url(server.url("/v1/chat/completions")).build())
+        }.build()
+        for(level in ThinkingLevel.entries){
+            server.enqueue(MockResponse().setHeader("Content-Type","text/event-stream").setBody(chunk("合成回复")+ending))
+            runBlocking{withTimeout(10_000){DeepSeekProvider(ProviderCredentials("https://api.deepseek.com/v1","deepseek-flash","unit-test-token"),redirected,level.id)
+                .streamReply(listOf(PromptMessage("user","合成问题"))).toList()}}
+            val request=server.takeRequest(2,TimeUnit.SECONDS)!!;assertEquals("POST",request.method)
+            val payload=org.json.JSONObject(request.body.readUtf8())
+            if(level==ThinkingLevel.DEFAULT){assertFalse(payload.has("thinking"));assertFalse(payload.has("reasoning_effort"))}
+            else{assertEquals("enabled",payload.getJSONObject("thinking").getString("type"));assertEquals(level.effort,payload.getString("reasoning_effort"))}
+            assertFalse(payload.has("temperature"));assertFalse(payload.has("max_tokens"))
+        }
+        assertEquals(4,server.requestCount)
+    }
     @Test fun httpFailureAndRedirectDoNotLeakBodyOrRetry() = tlsServer { server, client ->
         for (code in listOf(401, 429, 302)) {
             server.enqueue(MockResponse().setResponseCode(code).setHeader("Location", server.url("/leak"))

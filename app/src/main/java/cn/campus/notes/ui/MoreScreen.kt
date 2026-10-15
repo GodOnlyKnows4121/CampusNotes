@@ -36,7 +36,7 @@ fun MoreScreen() {
         Text("学习与工具",style=MaterialTheme.typography.titleLarge)
         listOf(
             Triple("review", "复习", "要点、提纲、自测与错题 · 待接入"),
-            Triple("models", "模型配置", "DeepSeek 对话；ASR、OCR 独立配置并主动调用"),
+            Triple("models", "模型配置", "多个语言模型；ASR、OCR 独立配置并主动调用"),
             Triple("permissions", "沙箱权限", "授权按大组规则自动新建整理成果；原件保留"),
             Triple("storage", "本地存储", "原件、成果、回收站与未关联副本")
         ).forEach { (key,title,description) -> Box(Modifier.testTag("more_$key")) {
@@ -46,7 +46,7 @@ fun MoreScreen() {
             OutlinedButton(onClick = { vm.act("示例已载入，示例条目均带标注") { vm.repository.loadExamples() } },
                 enabled = !busy, modifier = Modifier.testTag("load_examples")) { Text("载入示例课表与资料结构") }
         }
-        Text("0.5.0 · 本地优先\n录音、照片及导入原件保存在本机；识别主动发起，文字需核对确认。复习与备份尚未实现。卸载应用会删除本地数据。",
+        Text("0.6.0 · 本地优先\n独立会话与多模型配置；识别主动发起，文字需核对确认。附件对话、复习与备份尚未实现。卸载应用会删除本地数据。",
             style = MaterialTheme.typography.bodySmall)
     }
     when (selected) {
@@ -84,6 +84,7 @@ fun ModelSettingsDialog(onDismiss: () -> Unit) {
     val settings by vm.settings.collectAsState()
     val busy by vm.busy.collectAsState()
     var provider by rememberSaveable { mutableStateOf(ProviderKind.DEEPSEEK.name) }
+    var profilesOpen by rememberSaveable { mutableStateOf(false) }
     val kind = ProviderKind.valueOf(provider)
     val config = settings.providers[kind] ?: ProviderConfig()
     key(kind) {
@@ -97,6 +98,7 @@ fun ModelSettingsDialog(onDismiss: () -> Unit) {
             TextButton(enabled = !busy, onClick = {
                 vm.act("${kind.label} 配置已保存在本机", { secret = ""; onDismiss() }) {
                     vm.settingsStore.save(kind,endpoint,model,secret,removeKey)
+                    if(kind==ProviderKind.DEEPSEEK)vm.normalizeChatProfile(LEGACY_CHAT)
                 }
             }) { Text("保存配置") }
         }) {
@@ -105,6 +107,7 @@ fun ModelSettingsDialog(onDismiss: () -> Unit) {
                         label = { Text(item.label) }, enabled = !busy) }
                 }
                 Text("各服务独立保存；切换服务前请先保存。保存配置不调用网络；对话、整理及 ASR/OCR 均由用户主动发起，识别需在原件详情中确认上传。")
+                TextButton(onClick={profilesOpen=true}){Text("管理多个语言模型")}
                 if (kind != ProviderKind.DEEPSEEK) Text("识别适配兼容 Chat Completions：ASR 使用 input_audio，OCR 使用 image_url。请填写服务实际支持的完整模型名；不会自动替换配置或保证别名可用。")
                 if (kind == ProviderKind.DEEPSEEK) Text("地址可填写 API 基址或完整 /chat/completions 地址。模型以服务商当前可用名称为准；请求不会自动重试。")
                 OutlinedTextField(endpoint, { endpoint = it }, label = { Text("HTTPS API 地址") }, singleLine = true, enabled = !busy, modifier = Modifier.testTag("model_endpoint"))
@@ -116,4 +119,5 @@ fun ModelSettingsDialog(onDismiss: () -> Unit) {
                 Text("密钥由 Android Keystore 保护，不回显。密钥输入不随旋转恢复。", style = MaterialTheme.typography.bodySmall)
         }
     }
+    if(profilesOpen)ChatProfilesDialog{profilesOpen=false}
 }

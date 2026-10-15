@@ -23,11 +23,13 @@ data class OrganizePlan(val title: String, val body: String) {
 class OrganizeService(private val repository: LocalRepository,
     private val credentials: suspend () -> ProviderCredentials,
     private val provider: (ProviderCredentials) -> AiProvider = { DeepSeekProvider(it) }) {
-    suspend fun plan(topicId: String): OrganizeTask {
-        val client = provider(credentials())
+    suspend fun plan(topicId: String, profileId: String = LEGACY_CHAT, reasoning: String = "default"): OrganizeTask {
+        val frozen=credentials()
+        ModelCapabilities.apply(JSONObject(),frozen.endpoint,frozen.model,reasoning)
+        val client = provider(frozen)
         val source = repository.organizeSnapshot(topicId)
         var task = OrganizeTask(topicId = source.topicId, topicTitle = source.topicTitle, rule = source.rule,
-            sources = source.sources, sourceStamp = source.stamp)
+            sources = source.sources, sourceStamp = source.stamp,modelName=frozen.model,endpoint=frozen.endpoint,profileId=profileId,reasoning=reasoning)
         val dao = repository.db.dao()
         dao.save(task)
         try {

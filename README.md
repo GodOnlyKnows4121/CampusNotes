@@ -1,6 +1,6 @@
 # 校园记录与 AI 助手
 
-Android 0.5.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿用深色五页与本地结构，新增采集、文档提取和主动识别后的核对流程。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
+Android 0.6.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿用深色五页、采集与内容核对，新增独立会话、多语言模型配置和按已核验协议提供的思考档位。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)，千问 HTTP 405 与三模型联动状态见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
 
 ## 已实现的本地功能
 
@@ -8,9 +8,9 @@ Android 0.5.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 | --- | --- |
 | 首页 V2.1.10 | 固定一屏、校园卡片、录音/系统拍照/文字/导入入口、最近记录、本地搜索、独立校园页与作业待办 |
 | 日程 | 多学期、自定义节次、跨节与单双/指定周、冲突校验；格子原地放大，月历选教学周 |
-| AI | DeepSeek 流式对话、停止、错误提示、本机对话历史、回答另存记录；文本整理计划、预览确认、独立成果与执行日志 |
+| AI | 独立会话、各自草稿/上下文/模型/强度；流式文字对话、停止、错误提示、回答另存；文本整理计划、预览确认与日志 |
 | 资料库 V1.5 | 两列文件夹、多大组独立规则/模式、主题/原件/成果；系统多文件导入、打开、重命名、回收站、收件箱与课程关联 |
-| 更多 V1.0 | 独立模型设置、Keystore 密钥、沙箱授权、本地占用、回收站和采集恢复、未关联清理；复习与备份待接入 |
+| 更多 V1.0 | 多语言模型设置、独立 ASR/OCR 配置、Keystore 密钥、沙箱授权、本地占用、回收站和采集恢复、未关联清理；复习与备份待接入 |
 
 首次启动为空库。在“更多”可主动载入示例课表与资料结构，示例带标记，不产生虚构文件。编辑示例条目后保存为个人条目。只有数据库或文件操作成功才提示已保存。
 
@@ -18,8 +18,8 @@ Android 0.5.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 
 ## 数据与文件边界
 
-- Room 保存文字记录、课程、资料层级、学期/安排/待办/关联/回收站，以及识别任务与核对文字。schema 4 经 3→4 非破坏迁移增加结果表，不改变已有数据。大组规则独立保存，原件和成果使用不同节点类型。
-- DataStore 保存地址、模型名、沙箱偏好及密钥密文。密钥使用 Android Keystore 的 AES-256-GCM 加密，并绑定服务类型；不回显，不进入日志或 Activity 保存状态。输入中的新密钥旋转后清空，已保存密钥保留。
+- Room 保存文字记录、课程、资料层级、学期/安排/待办/关联/回收站、识别任务与核对文字，以及独立会话。schema 5 经 4→5 非破坏迁移把旧对话归入“历史会话”，并增加请求配置快照；旧消息未记录的模型显示为未知，不用当前设置倒填。完整保留 1→2→3→4→5 迁移链。
+- DataStore 保存地址、模型名、沙箱偏好、当前会话及密钥密文。密钥使用 Android Keystore 的 AES-256-GCM 加密，旧服务继续绑定原服务类型，新语言模型密钥独立绑定配置 ID；不回显，不进入日志或 Activity 保存状态。输入中的新密钥旋转后清空，已保存密钥保留。
 - 文件通过系统 `OpenDocument` 选择，仅复制用户授权的内容到 App 私有 `files/documents`。单文件上限 100 MB；失败会回滚未完成副本。导入后不依赖外部 URI 的长期授权。
 
 ## 采集、识别与文档提取
@@ -36,7 +36,7 @@ Android 0.5.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 - 代理仅在所选主题的 AI 成果区新建一个 Markdown 文件，路径由应用生成 UUID。模型只能返回标题与正文；不提供删除、覆盖、移动、外部修改或任意代码执行能力。未授权沙箱自动整理时须先预览并确认；已授权时有效计划自动执行。原件和外部源文件均保留。
 - 对话与任务日志新增 Room 表，提供数据库 1→2 非破坏迁移。中断、取消、断流或错误的回答保留并标注；只有完整问答进入后续上下文（最近最多 20 轮，合计 50000 字预算）。清空对话需确认，不删除另存的记录，也不代替服务商端的数据删除。
 
-页面选项、资料层级、编辑草稿使用 Compose 保存状态，支持切页和 Activity 重建；对话/代理切换保留草稿。AI 草稿是临时页面状态，已发送的对话持久保存。生成中的任务在应用退出后标注中断，不自动重新发起付费请求。
+页面选项、资料层级、编辑草稿使用 Compose 保存状态，支持切页和 Activity 重建；对话/代理切换保留草稿。各会话的文字草稿、模型与强度异步保存到 Room；会话切换和新建不发送请求。生成中的任务在应用退出后标注中断，不自动重新发起付费请求。
 
 ## 使用 DeepSeek 与整理代理
 
@@ -45,9 +45,13 @@ Android 0.5.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 3. 在资料库导入 UTF-8 文本原件（TXT / Markdown / CSV / JSON），或先对音频、照片、文档主动处理并核对确认文字。在“AI → 代理”选择主题并查看所属大组规则与原件列表。点击生成会上传该主题的可用文本和规则；最多 10 份，每份 64 KB，合计 48000 字。二进制原件不会被当作文字发送，缺少确认结果时拒绝整理。
 4. 未开启沙箱自动整理时，查看操作预览并确认写入；开启时自动执行有效计划。成果与原件分开存放，执行前再次校验原件和规则。来源改变、非法计划或重复执行均被拒绝；任务日志显示真实状态。
 
+“会话”支持新建、命名、切换与确认删除；清空只影响当前消息，保留草稿及其他会话。删除会话不会删除已另存的文字记录，生成期间先停止再删除。模型下拉框中的“管理语言模型”可新增独立配置；保存不联网，移除配置保留历史消息，相关会话需重新选择模型。已有默认 DeepSeek 与 ASR/OCR 的地址、名称和密钥不会自动改写。
+
+底部同一行提供强度与模型选择。官方 `api.deepseek.com` 的 `deepseek-flash` / `deepseek-v4-pro` 按当前官方协议支持轻量 `low`、标准 `high`、深入 `max`，发送 `thinking.type=enabled` 与 `reasoning_effort`；“模型默认”不覆盖供应商参数。未知模型/代理地址只开放默认档位，不能把温度或回复长度当作思考强度。已核验协议不代表用户账号在线可用；深入思考可能增加耗时和费用。请求开始后固定本次配置，之后修改只影响下一次请求；助手消息与整理日志记录本次模型和强度。
+
 HTTPS 请求保留证书验证，不跟随跳转，不自动重试；401/403、余额不足、限流、服务器错误、超时和不完整流均给出提示。服务端原始错误正文不回显，以免泄露密钥或敏感内容。只有正常结束的文字回复标记成功。
 
-本轮使用本地 HTTPS 模拟服务验证识别与对话传输协议，并在真机验证本地流程和已有密钥可解密；未调用真实 DeepSeek/ASR/OCR 服务。AI 资料检索、独立多会话和附件对话仍待阶段三实现。
+本轮只做本地测试与 HTTPS 模拟服务验证，手机不在身边，0.6.0 未安装或真机验收，未调用真实 DeepSeek/ASR/OCR 服务。此前 0.5.0 真机范围见 `VALIDATION_CONTENT.md`。千问 405 尚未取得出错入口及当前配置，按用户要求记录后暂缓；DeepSeek 自动调度 ASR/OCR 尚未实现。附件对话、引用检索及复习仍待阶段三后续实现。
 
 原对话助手内容只能取得引用标记，因此页面版本表示本次需求约束，不声称精确复刻旧原型。
 
@@ -78,6 +82,6 @@ APK 默认在 `app/build/outputs/apk/debug/app-debug.apk`，本机交付副本�
 
 `data` 负责 Room、设置、密钥和本地副本；`ui` 负责五页、编辑和 ViewModel；`domain` 包含示例和写入策略；`integration` 包含 DeepSeek HTTPS/SSE、对话与整理、前台录音、文档解析、独立 ASR/OCR 请求适配、AAC 分段及内容任务流程。
 
-后续阶段三继续独立会话、多模型与真实思考档位、附件对话、引用检索及复习；阶段四实现提醒、备份恢复和分类存储。沙箱外敏感修改执行器尚未提供。新增麦克风、前台录音服务、通知及录音唤醒权限，均用于明确的录音流程；没有广泛存储权限。每轮验证后提交并推送 GitHub，具体约定见 `AGENTS.md`，本轮证据见 `VALIDATION_CONTENT.md`。
+后续阶段三继续附件对话、引用检索、扩展代理及复习；阶段四实现提醒、备份恢复和分类存储。沙箱外敏感修改执行器尚未提供。麦克风、前台录音服务、通知及录音唤醒权限均用于明确的录音流程；没有广泛存储权限。每轮验证后提交并推送 GitHub，具体约定见 `AGENTS.md`，本轮证据见 `VALIDATION_SESSIONS.md`。
 
-参考官方文档：[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、[DeepSeek 错误码](https://api-docs.deepseek.com/quick_start/error_codes/)、[Room](https://developer.android.com/jetpack/androidx/releases/room)、[DataStore](https://developer.android.com/jetpack/androidx/releases/datastore)、[系统文档选择器](https://developer.android.com/training/data-storage/shared/documents-files)、[Android 密码学](https://developer.android.com/privacy-and-security/cryptography)。
+参考官方文档：[DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode/)、[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、[DeepSeek 错误码](https://api-docs.deepseek.com/quick_start/error_codes/)、[Room](https://developer.android.com/jetpack/androidx/releases/room)、[DataStore](https://developer.android.com/jetpack/androidx/releases/datastore)、[系统文档选择器](https://developer.android.com/training/data-storage/shared/documents-files)、[Android 密码学](https://developer.android.com/privacy-and-security/cryptography)。

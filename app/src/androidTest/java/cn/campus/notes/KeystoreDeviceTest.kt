@@ -11,6 +11,13 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class KeystoreDeviceTest {
+    @Test fun profileCiphertextIsBoundToProfileAndCannotReplaceLegacyKeys() {
+        val first=cn.campus.notes.data.newId();val second=cn.campus.notes.data.newId()
+        val encrypted=KeyCipher().encryptProfile("profile-test-only",first)
+        assertEquals("profile-test-only",KeyCipher().decryptProfile(encrypted,first))
+        try{KeyCipher().decryptProfile(encrypted,second);fail()}catch(_:java.security.GeneralSecurityException){}
+        try{KeyCipher().decrypt(encrypted,ProviderKind.DEEPSEEK);fail()}catch(_:java.security.GeneralSecurityException){}
+    }
     @Test fun existingConfiguredKeysRemainDecryptableWithoutNetworkOrWrites() = runBlocking {
         val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
         val settings = SettingsStore(context)
