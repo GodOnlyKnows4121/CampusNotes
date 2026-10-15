@@ -46,14 +46,37 @@ class RecognitionProtocolTest {
         assertEquals("text",image.getJSONObject(1).getString("type"))
     } }
     @Test fun failedAndRedirectedRequestsNeverLeakServerBodiesOrRetry() = tls { server, client -> runBlocking {
-        for(code in listOf(401,429,302,500)) {
+        for(code in listOf(401,405,429,302,500)) {
             server.enqueue(MockResponse().setResponseCode(code).setHeader("Location",server.url("/other")).setBody("test-only-token PRIVATE_CONTENT"))
             try { adapter(server,client).recognize(byteArrayOf(1),"image/jpeg"); fail() } catch(e: AiFailure) {
                 assertFalse(e.message!!.contains("PRIVATE_CONTENT")); assertFalse(e.message!!.contains("test-only-token"))
             }
         }
-        assertEquals(4,server.requestCount)
+        assertEquals(5,server.requestCount)
     } }
+    @Test fun invalidProtocolIsRejectedBeforeAnyNetworkUpload() = tls { server, client -> runBlocking {
+        for(path in listOf("/apps/anthropic","/apps/anthropic/v1/messages","/v1/responses","/v1/audio/transcriptions","/api/v1/services/audio/asr/transcription")) {
+            val adapter=RecognitionProvider(ProviderCredentials(server.url(path).toString(),"configured-model","test-only-token"),client)
+            try{adapter.transcribe(byteArrayOf(1),"audio/wav");fail("Wrong protocol should fail locally")}catch(e:IllegalArgumentException){assertTrue(e.message!!.contains("协议"))}
+            try{adapter.recognize(byteArrayOf(1),"image/png");fail("Wrong protocol should fail locally")}catch(_:IllegalArgumentException){}
+        }
+        assertEquals(0,server.requestCount)
+    } }
+    @Test fun officialExamplesAndRecognitionCapabilitiesAreValidatedWithoutNetwork() {
+        for(kind in listOf(cn.campus.notes.data.ProviderKind.ASR,cn.campus.notes.data.ProviderKind.OCR)) {
+            val preset=RecognitionConfiguration.qwenExample(kind)
+            assertNull(RecognitionConfiguration.problem(kind,preset))
+            assertNull(RecognitionConfiguration.problem(kind,preset.copy(endpoint=preset.endpoint+"/chat/completions")))
+            assertNotNull(RecognitionConfiguration.problem(kind,preset.copy(model="qwen")))
+            assertNotNull(RecognitionConfiguration.problem(kind,preset.copy(endpoint="https://maas.qianwenaiapi.com/apps/anthropic")))
+        }
+        val asr=cn.campus.notes.data.ProviderKind.ASR;val ocr=cn.campus.notes.data.ProviderKind.OCR
+        assertNotNull(RecognitionConfiguration.problem(asr,RecognitionConfiguration.qwenExample(ocr)))
+        assertNotNull(RecognitionConfiguration.problem(ocr,RecognitionConfiguration.qwenExample(asr)))
+        assertNotNull(RecognitionConfiguration.problem(asr,RecognitionConfiguration.qwenExample(asr).copy(model="qwen3-asr-flash-filetrans")))
+        assertNull(RecognitionConfiguration.problem(asr,cn.campus.notes.data.ProviderConfig("https://custom.example.invalid/v1","custom-asr")))
+        assertTrue(DeepSeekProvider.httpFailure(405).message!!.contains("POST"))
+    }
     @Test fun incompleteMalformedAndEmptyResultsNeverBecomeReviewableText() = tls { server, client -> runBlocking {
         for(response in listOf(reply("partial","length"), reply(""), MockResponse().setHeader("Content-Type","application/json").setBody("{broken"))) {
             server.enqueue(response)
@@ -70,6 +93,15 @@ class RecognitionProtocolTest {
         val job = launch(Dispatchers.IO) { adapter(server,client).transcribe(byteArrayOf(1),"audio/mp4") }
         assertNotNull(withContext(Dispatchers.IO) { server.takeRequest(3,TimeUnit.SECONDS) })
         job.cancelAndJoin(); assertTrue(job.isCancelled)
+        assertEquals(1,server.requestCount)
+    } }
+    @Test fun timeoutNeverClaimsAnUnreturnedRecognitionResultWasSaved() = tls { server, client -> runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val bounded=client.newBuilder().readTimeout(150,TimeUnit.MILLISECONDS).callTimeout(500,TimeUnit.MILLISECONDS).build()
+        try{adapter(server,bounded).recognize(byteArrayOf(1),"image/png");fail()}catch(e:AiFailure){
+            assertTrue(e.message!!.contains("超时"));assertTrue(e.message!!.contains("原件保留"))
+            assertFalse(e.message!!.contains("已保留部分回复"))
+        }
         assertEquals(1,server.requestCount)
     } }
 }

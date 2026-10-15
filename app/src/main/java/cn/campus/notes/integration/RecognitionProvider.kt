@@ -2,6 +2,7 @@ package cn.campus.notes.integration
 
 import android.util.Base64
 import cn.campus.notes.data.ProviderCredentials
+import cn.campus.notes.data.ProviderKind
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -17,11 +18,13 @@ import kotlin.coroutines.resumeWithException
 class RecognitionProvider(private val credentials: ProviderCredentials,
     private val client: OkHttpClient = DeepSeekProvider.defaultClient) : SpeechRecognizer, TextRecognizer {
     override suspend fun transcribe(audio: ByteArray, mime: String): String {
+        RecognitionConfiguration.validate(ProviderKind.ASR,credentials.endpoint,credentials.model)
         require(mime in AUDIO_MIMES) { "此音频格式尚未接入 ASR，请使用 M4A、MP3、WAV、FLAC 或 OGG" }
         return request(JSONArray().put(JSONObject().put("type", "input_audio")
             .put("input_audio", JSONObject().put("data", dataUrl(audio, mime)))))
     }
     override suspend fun recognize(image: ByteArray, mime: String): String {
+        RecognitionConfiguration.validate(ProviderKind.OCR,credentials.endpoint,credentials.model)
         require(mime in setOf("image/jpeg", "image/png", "image/webp", "image/bmp")) { "OCR 支持 JPEG、PNG、WebP、BMP；原件保留" }
         return request(JSONArray().put(JSONObject().put("type", "image_url")
             .put("image_url", JSONObject().put("url", dataUrl(image, mime))))
@@ -44,7 +47,7 @@ class RecognitionProvider(private val credentials: ProviderCredentials,
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(DeepSeekProvider.networkFailure(e))
+                    if (continuation.isActive) continuation.resumeWithException(networkFailure(e))
                 }
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
@@ -69,7 +72,7 @@ class RecognitionProvider(private val credentials: ProviderCredentials,
                             require(text.isNotEmpty() && text.length <= DocumentParser.MAX_TEXT) { "识别文字为空或超过 60000 字，请检查或拆分原件" }
                             if (continuation.isActive) continuation.resume(text)
                         } catch (e: Exception) {
-                            val safe = if (e is AiFailure) e else AiFailure("识别响应格式无效、不完整或超过处理上限，请核对服务能力；原件保留")
+                            val safe = when(e){is AiFailure->e;is IOException->networkFailure(e);else->AiFailure("识别响应格式无效、不完整或超过处理上限，请核对服务能力；原件保留")}
                             if (continuation.isActive) continuation.resumeWithException(safe)
                         }
                     }
@@ -78,6 +81,9 @@ class RecognitionProvider(private val credentials: ProviderCredentials,
         } catch (e: Exception) { if (continuation.isActive) continuation.resumeWithException(e) }
     }
     companion object {
+        private fun networkFailure(error:IOException)=AiFailure(if(error is java.io.InterruptedIOException)
+            "识别连接或响应超时；本次未取得完整结果，原件保留，不会自动重试"
+            else "识别网络连接失败；本次未取得完整结果，原件保留，请检查网络与配置")
         const val MAX_INPUT = 7_000_000
         val AUDIO_MIMES = setOf("audio/mp4", "audio/m4a", "audio/x-m4a", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/flac", "audio/ogg", "audio/opus", "audio/aac")
     }

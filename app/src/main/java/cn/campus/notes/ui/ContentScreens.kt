@@ -7,6 +7,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -142,11 +144,14 @@ fun ContentProcessingPanel(file: LibraryNode, onReview: (String) -> Unit) {
         val config = settings.providers[if(kind == "asr") ProviderKind.ASR else ProviderKind.OCR] ?: ProviderConfig()
         // Freeze the visible configuration for this confirmation; changes require another preview.
         val snapshot = remember(kind) { config }
-        AlertDialog(onDismissRequest = { upload = null }, title = { Text("确认上传原件进行${if(kind == "asr") "语音转写" else "图片识别"}") }, text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val problem=RecognitionConfiguration.problem(if(kind=="asr")ProviderKind.ASR else ProviderKind.OCR,snapshot)
+        AlertDialog(onDismissRequest = { upload = null }, title = { Text("确认上传原件进行${if(kind == "asr") "语音转写" else "图片识别"}") }, text = { Column(Modifier.heightIn(max=320.dp).verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(file.title); Text("${file.bytes} 字节 · ${if(kind=="asr")"AAC/M4A 长录音按最多 3 分钟、5 MB 分段连续转写，可能产生多次请求；其他音频限 3 分钟、7 MB" else "图片上限 7 MB"}")
             Text("服务：${snapshot.endpoint.ifBlank { "未配置" }}\n模型：${snapshot.model.ifBlank { "未配置" }}")
+            if(problem!=null)Text(problem,color=MaterialTheme.colorScheme.error)
+            else Text("实际请求：POST ${DeepSeekProvider.completionUrl(snapshot.endpoint)}")
             Text("将仅发送这份原件到所示服务，可能产生费用。采用兼容 Chat Completions 的 input_audio / image_url 协议；模型名称不等于能力已验证。不会使用 DeepSeek 密钥替代识别配置。")
-        } }, confirmButton = { TextButton(enabled = snapshot.hasKey && snapshot.model.isNotBlank() && snapshot.endpoint.isNotBlank() && file.bytes in 1..(if(kind=="asr")512_000_000L else RecognitionProvider.MAX_INPUT.toLong()), onClick = {
+        } }, confirmButton = { TextButton(enabled = problem==null && snapshot.hasKey && file.bytes in 1..(if(kind=="asr")512_000_000L else RecognitionProvider.MAX_INPUT.toLong()), onClick = {
             upload = null; vm.contentProcessor.start(file.id, kind, snapshot)
         }) { Text("发送并处理") } }, dismissButton = { TextButton(onClick = { upload = null }) { Text("取消") } })
     }

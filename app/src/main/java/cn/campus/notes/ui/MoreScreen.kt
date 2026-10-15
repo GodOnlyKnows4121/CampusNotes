@@ -12,6 +12,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import cn.campus.notes.data.*
+import cn.campus.notes.integration.RecognitionConfiguration
+import cn.campus.notes.integration.DeepSeekProvider
 
 @Composable
 fun MoreScreen() {
@@ -46,7 +48,7 @@ fun MoreScreen() {
             OutlinedButton(onClick = { vm.act("示例已载入，示例条目均带标注") { vm.repository.loadExamples() } },
                 enabled = !busy, modifier = Modifier.testTag("load_examples")) { Text("载入示例课表与资料结构") }
         }
-        Text("0.6.0 · 本地优先\n独立会话与多模型配置；识别主动发起，文字需核对确认。附件对话、复习与备份尚未实现。卸载应用会删除本地数据。",
+        Text("0.6.1 · 本地优先\n独立会话与多模型配置；识别主动发起，文字需核对确认。附件对话、复习与备份尚未实现。卸载应用会删除本地数据。",
             style = MaterialTheme.typography.bodySmall)
     }
     when (selected) {
@@ -93,10 +95,12 @@ fun ModelSettingsDialog(onDismiss: () -> Unit) {
         // Deliberately not saveable: never place plaintext API keys in saved instance state.
         var secret by remember { mutableStateOf("") }
         var removeKey by rememberSaveable { mutableStateOf(false) }
+        val problem=if(kind!=ProviderKind.DEEPSEEK) RecognitionConfiguration.problem(kind,ProviderConfig(endpoint,model)) else null
         EditorFrame("模型配置", { if (!busy) onDismiss() }, footer = {
             TextButton(onClick = onDismiss, enabled = !busy) { Text("返回") }
             TextButton(enabled = !busy, onClick = {
                 vm.act("${kind.label} 配置已保存在本机", { secret = ""; onDismiss() }) {
+                    if(kind!=ProviderKind.DEEPSEEK&&!removeKey)RecognitionConfiguration.validate(kind,endpoint,model)
                     vm.settingsStore.save(kind,endpoint,model,secret,removeKey)
                     if(kind==ProviderKind.DEEPSEEK)vm.normalizeChatProfile(LEGACY_CHAT)
                 }
@@ -104,11 +108,17 @@ fun ModelSettingsDialog(onDismiss: () -> Unit) {
         }) {
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     ProviderKind.entries.forEach { item -> FilterChip(kind == item, { provider = item.name },
-                        label = { Text(item.label) }, enabled = !busy) }
+                        label = { Text(item.label) }, enabled = !busy,modifier=Modifier.testTag("provider_${item.name}")) }
                 }
                 Text("各服务独立保存；切换服务前请先保存。保存配置不调用网络；对话、整理及 ASR/OCR 均由用户主动发起，识别需在原件详情中确认上传。")
                 TextButton(onClick={profilesOpen=true}){Text("管理多个语言模型")}
                 if (kind != ProviderKind.DEEPSEEK) Text("识别适配兼容 Chat Completions：ASR 使用 input_audio，OCR 使用 image_url。请填写服务实际支持的完整模型名；不会自动替换配置或保证别名可用。")
+                if(kind!=ProviderKind.DEEPSEEK) {
+                    OutlinedButton(enabled=!busy,onClick={val example=RecognitionConfiguration.qwenExample(kind);endpoint=example.endpoint;model=example.model},modifier=Modifier.testTag("recognition_example")){Text("填入千问官方示例（未保存）")}
+                    Text("仅替换当前编辑草稿，点击保存才生效；已有密钥留空保留。示例不代表账户已开通或连接成功。",style=MaterialTheme.typography.bodySmall)
+                    Text(problem?:"本地协议检查通过（未联网）",color=if(problem==null)MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,modifier=Modifier.testTag("recognition_config_status"))
+                    if(problem==null)Text("实际请求：POST ${DeepSeekProvider.completionUrl(endpoint)}",style=MaterialTheme.typography.bodySmall)
+                }
                 if (kind == ProviderKind.DEEPSEEK) Text("地址可填写 API 基址或完整 /chat/completions 地址。模型以服务商当前可用名称为准；请求不会自动重试。")
                 OutlinedTextField(endpoint, { endpoint = it }, label = { Text("HTTPS API 地址") }, singleLine = true, enabled = !busy, modifier = Modifier.testTag("model_endpoint"))
                 OutlinedTextField(model, { model = it }, label = { Text("模型 / 服务名称") }, singleLine = true, enabled = !busy, modifier = Modifier.testTag("model_name"))

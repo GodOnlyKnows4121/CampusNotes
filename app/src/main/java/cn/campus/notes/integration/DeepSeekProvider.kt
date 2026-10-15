@@ -70,6 +70,7 @@ class DeepSeekProvider(private val credentials: ProviderCredentials,
             401, 403 -> "鉴权失败（HTTP $code），请检查 API 密钥和服务权限"
             402 -> "账户余额不足（HTTP 402），请在服务商处检查余额"
             404 -> "接口或模型不存在（HTTP 404），请检查 API 地址和模型名称"
+            405 -> "接口拒绝 POST（HTTP 405），请核对接口路径和协议；不会自动改为 GET 或重试"
             429 -> "请求过于频繁（HTTP 429），请稍后手动重试"
             in 300..399 -> "服务要求跳转（HTTP $code），为保护密钥已停止请求，请填写最终 HTTPS 地址"
             in 500..599 -> "服务暂不可用（HTTP $code），请稍后手动重试"

@@ -11,8 +11,8 @@ android {
         applicationId = "cn.campus.notes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.6.0-sessions"
+        versionCode = 8
+        versionName = "0.6.1-recognition"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }

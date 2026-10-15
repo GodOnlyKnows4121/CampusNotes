@@ -34,6 +34,7 @@ class ContentProcessor(context: Context, private val repo: LocalRepository, priv
                 val credentials = providerKind?.let { p ->
                     val current = settings.data.first().providers[p] ?: ProviderConfig()
                     require(expected != null && current == expected) { "识别配置已改变，请重新查看上传内容后确认" }
+                    RecognitionConfiguration.validate(p,current.endpoint,current.model)
                     settings.credentials(p)
                 }
                 result = result!!.copy(provider = credentials?.let { "${it.endpoint}\n${it.model}" } ?: "本机解析")

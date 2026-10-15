@@ -1,6 +1,6 @@
 # 校园记录与 AI 助手
 
-Android 0.6.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿用深色五页、采集与内容核对，新增独立会话、多语言模型配置和按已核验协议提供的思考档位。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)，千问 HTTP 405 与三模型联动状态见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
+Android 0.6.1，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿用深色五页、采集与内容核对、独立会话和多语言模型，新增识别协议预检与配置示例。完整目标见 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)，实际交付与待办见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)，千问 HTTP 405 与三模型联动状态见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
 
 ## 已实现的本地功能
 
@@ -27,7 +27,8 @@ Android 0.6.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 - 首页录音申请麦克风权限后，使用 microphone 类型前台服务与常驻通知，提供暂停、继续、结束并保存。单次上限 6 小时或 512 MB；停止失败或进程中断留下的文件在“更多 → 本地存储 → 采集恢复”中主动保存或确认丢弃。真实麦克风与锁屏持续录音尚未真机验收。
 - 拍照调用系统相机，原件直接写入本应用私有临时目录，确认后归入收件箱；取消不上传，也不伪造拍照成功。没有请求广泛存储或本应用相机权限。本轮按用户选择未执行真实拍照验收。
 - 原件详情提供本机文字提取：UTF-8/带 BOM 的 UTF-16 文本、DOCX、PPTX、可读 PDF。上限 20 MB、60000 字；PDF 上限 200 页。旧版 DOC/PPT、加密或损坏文档、扫描 PDF、表格/公式的精确版式保真不在当前解析能力内；可保存和外部打开，扫描页需另存图片后 OCR。不会以空文字表示解析成功。
-- ASR 与 OCR 分别使用已保存的服务地址、模型和密钥。兼容 Chat Completions 的 `input_audio` / `image_url` 请求适配已实现；仅在原件详情预览上传内容并确认后发送，可能计费。模型别名（如仅写 `qwen`）和代理平台能力必须以实际服务为准，本轮未做真实在线调用验收。
+- ASR 与 OCR 分别使用已保存的服务地址、模型和密钥。兼容 Chat Completions 的 `input_audio` / `image_url` 请求适配已实现；仅在原件详情预览上传内容并确认后发送，可能计费。模型别名和代理平台能力必须以实际服务为准；0.6.1 的真实验收结果是 ASR 合成短样本通过、OCR 超时未通过。
+- 0.6.1 在设置、上传预览及请求入口检查识别协议。Anthropic Messages、Responses 等路径不能直接用于现有识别适配；官方示例只填入编辑草稿，不自动保存或联网。实际 POST 地址可预览，本地检查通过不等于账号或模型在线可用。
 - AAC/M4A（含本应用录音）在本机无损封装为每段最多 3 分钟、约 5 MB，按顺序转写；其他音频本轮限 3 分钟、7 MB。图片限 7 MB。长录音可能触发多次请求，支持取消；失败、中断的部分文字保留但不能当作完整结果确认，也不会自动重发。
 - 完整处理结果先进入“待核对”，用户可修改并确认。有效版本可用于首页搜索、有限文本整理及另存文字记录；另存记录可查看来源。重新确认后使旧整理计划失效。原件不覆盖，回收站保留识别结果，永久删除原件时同时移除其识别文本，迟到任务不能重新写回。
 - 重命名改变本地显示名称；删除大组/学科/主题会在确认后将其下级树移入回收站并保留副本。恢复先校验父级与冲突，永久删除才移除不再引用的本地副本。外部源文件不变。
@@ -51,7 +52,7 @@ Android 0.6.0，包名 `cn.campus.notes`，最低 Android 8.0（API 26）。沿�
 
 HTTPS 请求保留证书验证，不跟随跳转，不自动重试；401/403、余额不足、限流、服务器错误、超时和不完整流均给出提示。服务端原始错误正文不回显，以免泄露密钥或敏感内容。只有正常结束的文字回复标记成功。
 
-首轮完成 79 项本机测试；随后 USB 保留数据升级到 0.6.0，12 项真机测试完整通过，旧数据字段、原件及已有加密配置保持一致。本轮未调用真实 DeepSeek/ASR/OCR。USB 核查发现 ASR 配置的 Anthropic 路由与当前 Chat Completions 适配不匹配，未复现用户报告的 405，也未自动改写配置。自动调度 ASR/OCR、附件对话、引用检索及复习仍待后续实现。详细范围见 `VALIDATION_SESSIONS.md` 与 `KNOWN_ISSUES.md`。
+0.6.0 完成 79 项本机与 12 项真机测试，并保留数据升级；当时仅核对配置、没有在线调用。0.6.1 完成 84 项本机与 12 项不联网真机测试，并按明确授权修正识别配置及各验连一次，结果见下文。自动调度 ASR/OCR、附件对话、引用检索及复习仍待后续实现。
 
 原对话助手内容只能取得引用标记，因此页面版本表示本次需求约束，不声称精确复刻旧原型。
 
@@ -76,12 +77,14 @@ APK 默认在 `app/build/outputs/apk/debug/app-debug.apk`，本机交付副本�
 .\gradlew.bat :app:connectedDebugAndroidTest
 ```
 
-设备冒烟测试只使用现有资料，不向空库自动插入示例。当前学期没有课程或资料库没有主题时，对应用例显式跳过。Keystore 测试验证测试字符串和已配置密钥可解密，不回显密钥或修改配置；AI 本地设备测试使用独立数据库、合成回复与单独清理的 UUID 文件，不调用模型。测试直接启动主应用并等待前台生命周期，避开部分厂商系统对测试包启动页的拦截。0.4.0/0.4.1 真机升级与本轮验证见 `VALIDATION_UI_LOCAL.md`，历史记录保留在 `VALIDATION.md` 和 `VALIDATION_PHASE3.md`。
+设备冒烟测试浏览现有资料，草稿使用临时独立会话并在结束后清理，不向空库自动插入示例。当前学期没有课程或资料库没有主题时，对应用例显式跳过。Keystore 测试验证测试字符串和已配置密钥可解密，不回显密钥或修改服务配置；AI 本地设备测试使用独立数据库、合成回复与单独清理的 UUID 文件，不调用模型。在线识别测试默认跳过，只有显式授权参数才执行；普通回归选择离线测试类，防止误发付费请求。当前验证见 `VALIDATION_RECOGNITION.md`，历史升级记录保留在各版本验证文档中。
 
 ## 代码与后续
 
 `data` 负责 Room、设置、密钥和本地副本；`ui` 负责五页、编辑和 ViewModel；`domain` 包含示例和写入策略；`integration` 包含 DeepSeek HTTPS/SSE、对话与整理、前台录音、文档解析、独立 ASR/OCR 请求适配、AAC 分段及内容任务流程。
 
-后续阶段三继续附件对话、引用检索、扩展代理及复习；阶段四实现提醒、备份恢复和分类存储。沙箱外敏感修改执行器尚未提供。麦克风、前台录音服务、通知及录音唤醒权限均用于明确的录音流程；没有广泛存储权限。每轮验证后提交并推送 GitHub，具体约定见 `AGENTS.md`，本轮证据见 `VALIDATION_SESSIONS.md`。
+后续阶段三继续附件对话、引用检索、扩展代理及复习；阶段四实现提醒、备份恢复和分类存储。沙箱外敏感修改执行器尚未提供。麦克风、前台录音服务、通知及录音唤醒权限均用于明确的录音流程；没有广泛存储权限。每轮验证后提交并推送 GitHub，具体约定见 `AGENTS.md`，本轮证据见 `VALIDATION_RECOGNITION.md`，0.6.0 会话与迁移证据见 `VALIDATION_SESSIONS.md`。
+
+0.6.1 经用户明确授权，保留密钥修正识别配置，并各发送一次合成音频/图片：`qwen3-asr-flash` 真实识别通过；`qwen3.5-ocr` 请求超时，未验收成功且未自动重试。未上传个人资料，未进行真实采集。本次未复现 404/405，也不把未收到完整 OCR 响应当作该问题全面解决。
 
 参考官方文档：[DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode/)、[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)、[DeepSeek 错误码](https://api-docs.deepseek.com/quick_start/error_codes/)、[Room](https://developer.android.com/jetpack/androidx/releases/room)、[DataStore](https://developer.android.com/jetpack/androidx/releases/datastore)、[系统文档选择器](https://developer.android.com/training/data-storage/shared/documents-files)、[Android 密码学](https://developer.android.com/privacy-and-security/cryptography)。
