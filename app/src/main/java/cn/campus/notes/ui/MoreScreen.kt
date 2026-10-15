@@ -20,25 +20,32 @@ fun MoreScreen() {
     val settings by vm.settings.collectAsState()
     val bytes by vm.storageBytes.collectAsState()
     val busy by vm.busy.collectAsState()
+    val trashed by vm.trash.collectAsState()
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var clean by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { vm.storageBytes.value = vm.repository.storageBytes() }
+    var trash by rememberSaveable { mutableStateOf(false) }
+    var inbox by rememberSaveable { mutableStateOf(false) }
+    var storageRead by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { vm.storageBytes.value = vm.repository.storageBytes();storageRead=true }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).testTag("more_screen"),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        ExampleNotice("更多 · V1.0 · 本地功能")
+        OutlinedCard(Modifier.fillMaxWidth(),shape=androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
+            Column(Modifier.padding(18.dp)) {Text("我的校园助手",style=MaterialTheme.typography.titleMedium);Text("本地优先 · 记录与资料由你管理",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary)}
+        }
+        Text("学习与工具",style=MaterialTheme.typography.titleLarge)
         listOf(
-            Triple("review", "复习", "复习计划与卡片 · 尚未实现"),
+            Triple("review", "复习", "要点、提纲、自测与错题 · 待接入"),
             Triple("models", "模型配置", "DeepSeek 已接入；ASR、OCR 分别保存配置，识别尚未接入"),
             Triple("permissions", "沙箱权限", "授权按大组规则自动新建整理成果；原件保留"),
-            Triple("storage", "本地存储", "查看占用与清理未关联副本")
+            Triple("storage", "本地存储", "原件、成果、回收站与未关联副本")
         ).forEach { (key,title,description) -> Box(Modifier.testTag("more_$key")) {
             FeatureCard(title,description) { selected = key }
         } }
-        if (data.nodes.isEmpty() && data.courses.isEmpty() && data.notes.isEmpty()) {
+        if (data.nodes.isEmpty() && data.courses.isEmpty() && data.notes.isEmpty() && trashed.isEmpty()) {
             OutlinedButton(onClick = { vm.act("示例已载入，示例条目均带标注") { vm.repository.loadExamples() } },
                 enabled = !busy, modifier = Modifier.testTag("load_examples")) { Text("载入示例课表与资料结构") }
         }
-        Text("0.3.0 · 本地优先\n对话与整理日志保存在本机。主动发送时会调用配置的模型服务；识别、云同步与备份尚未实现。卸载应用会删除本地数据。",
+        Text("0.4.0 · 本地优先\n记录、学期与待办保存在本机；识别、复习与备份仍待后续阶段接入。卸载应用会删除本地数据。",
             style = MaterialTheme.typography.bodySmall)
     }
     when (selected) {
@@ -53,19 +60,23 @@ fun MoreScreen() {
             } }, confirmButton = { TextButton(onClick = { selected = null }) { Text("返回") } })
         "storage" -> AlertDialog(onDismissRequest = { selected = null }, title = { Text("本地存储") },
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("文件副本：${"%.2f".format(bytes / 1024.0 / 1024.0)} MB\n文字记录：${data.notes.size} 条\n课程：${data.courses.size} 门\n资料条目：${data.nodes.size} 项")
-                Text("清理仅删除未被资料库引用的导入残留文件；保留全部已关联副本。若需删除资料，请在资料库中逐项操作。")
+                Text(if(storageRead) "文件副本（含回收站）：${"%.2f".format(bytes / 1024.0 / 1024.0)} MB\n文字记录：${data.notes.size} 条\n课程：${data.courses.size} 门\n资料条目：${data.nodes.size} 项" else "正在读取本地占用…")
+                OutlinedButton(onClick={inbox=true}){Text("待整理收件箱")}
+                OutlinedButton(onClick={trash=true}){Text("回收站 / 恢复")}
+                Text("清理保留资料库及回收站中的全部副本，只删除未关联残留。永久删除请在回收站逐项确认。")
                 OutlinedButton(onClick = { clean = true }, enabled = !busy) { Text("清理未关联副本") }
                 Text("备份与恢复尚未实现。卸载应用会删除本地数据库、设置和文件副本。")
             } }, confirmButton = { TextButton(onClick = { selected = null }) { Text("返回") } })
     }
+    if(trash)TrashDialog{trash=false}
+    if(inbox)InboxDialog{inbox=false}
     if (clean) DeleteConfirmation("未关联副本", "仅清理本应用内没有资料条目引用的文件，不能恢复。", { clean = false }) {
         vm.act("未关联副本清理完成", { clean = false }) { vm.repository.cleanOrphans() }
     }
 }
 
 @Composable
-private fun ModelSettingsDialog(onDismiss: () -> Unit) {
+fun ModelSettingsDialog(onDismiss: () -> Unit) {
     val vm = LocalCampus.current
     val settings by vm.settings.collectAsState()
     val busy by vm.busy.collectAsState()

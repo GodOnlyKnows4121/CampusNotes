@@ -25,7 +25,7 @@ class EmptyAppTest {
     @Test fun emptyFirstLaunchCanBuildLibraryHierarchyInLandscape() {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("home_screen").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("nav_LIBRARY").performClick()
-        compose.onNodeWithText("＋ 大组").performClick()
+        compose.onNodeWithText("＋ 新建").performClick()
         compose.waitForIdle()
         compose.runOnUiThread {
             android.view.inspector.WindowInspector.getGlobalWindowViews().forEachIndexed { index, view ->

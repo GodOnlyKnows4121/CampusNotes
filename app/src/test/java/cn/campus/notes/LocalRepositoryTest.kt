@@ -65,7 +65,14 @@ class LocalRepositoryTest {
         assertEquals(1,repo.cleanOrphans()); assertFalse(orphan.exists())
         assertTrue(repo.document(entry.localName).exists())
         repo.deleteNode("g")
-        assertTrue(db.dao().nodes().isEmpty()); assertFalse(repo.document(entry.localName).exists())
+        assertTrue(db.dao().nodes().isEmpty()); assertTrue(repo.document(entry.localName).exists())
+        assertEquals(0,repo.cleanOrphans())
+        val trash=db.features().allTrash().single()
+        repo.restoreTrash(trash.id)
+        assertEquals(4,db.dao().nodes().size)
+        repo.deleteNode("g")
+        repo.purgeTrash(db.features().allTrash().single().id)
+        assertFalse(repo.document(entry.localName).exists())
         assertEquals("课堂原文",source.readText())
     }
     @Test fun failedImportsRollbackAndCannotAttachToWrongHierarchy() = runBlocking {

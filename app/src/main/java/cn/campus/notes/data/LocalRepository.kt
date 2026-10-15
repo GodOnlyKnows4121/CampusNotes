@@ -16,6 +16,9 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.LocalDate
 import cn.campus.notes.domain.WritePolicy
 import cn.campus.notes.domain.WriteScope
 import cn.campus.notes.domain.WriteDecision
@@ -30,16 +33,29 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         require(note.title.isNotBlank()) { "请填写记录标题" }
         dao.save(note.copy(title = note.title.trim(), updatedAt = System.currentTimeMillis()))
     }
-    suspend fun deleteNote(id: String) = dao.deleteNote(id)
+    suspend fun deleteNote(id: String) = db.withTransaction {
+        val value = dao.notes().firstOrNull { it.id == id } ?: return@withTransaction
+        db.features().save(TrashEntry(kind = "note", title = value.title, payload = JSONObject()
+            .put("id",value.id).put("title",value.title).put("body",value.body).put("updatedAt",value.updatedAt).toString()))
+        dao.deleteNote(id)
+    }
     suspend fun saveCourse(course: LocalCourse) = db.withTransaction {
         require(course.title.isNotBlank()) { "请填写课程名称" }
         require(course.day in 0..6 && course.slot in 0..4) { "请选择有效的星期与节次" }
         require(course.firstWeek in 1..30 && course.lastWeek in course.firstWeek..30) { "周次须在 1–30 之间，结束周不能早于开始周" }
-        require(dao.courses().none { it.id != course.id && it.day == course.day && it.slot == course.slot &&
-            it.firstWeek <= course.lastWeek && course.firstWeek <= it.lastWeek }) { "该时段已有课程，请调整星期、节次或周次" }
+        checkCourseConflict(course, db.features().allPlacements().find { it.courseId == course.id } ?: CoursePlacement.legacy(course))
         dao.save(course.copy(title = course.title.trim()))
     }
-    suspend fun deleteCourse(id: String) = dao.deleteCourse(id)
+    suspend fun deleteCourse(id: String) = db.withTransaction {
+        val c = dao.courses().find { it.id == id } ?: return@withTransaction
+        val p = db.features().allPlacements().find { it.courseId == id }
+        val json = JSONObject().put("id",c.id).put("title",c.title).put("day",c.day).put("slot",c.slot)
+            .put("room",c.room).put("teacher",c.teacher).put("firstWeek",c.firstWeek).put("lastWeek",c.lastWeek).put("example",c.example)
+        p?.let { json.put("placement",JSONObject().put("semesterId",it.semesterId).put("startPeriod",it.startPeriod)
+            .put("endPeriod",it.endPeriod).put("pattern",it.pattern).put("customWeeks",it.customWeeks)) }
+        db.features().save(TrashEntry(kind="course",title=c.title,payload=json.toString()))
+        db.features().deletePlacement(id); dao.deleteCourse(id)
+    }
     suspend fun saveNode(node: LibraryNode) = db.withTransaction {
         require(node.title.isNotBlank()) { "名称不能为空" }
         val all = dao.nodes()
@@ -58,16 +74,17 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
     }
     // Deletion only touches this application's own copies. External source documents are never edited.
     suspend fun deleteNode(id: String) = withContext(Dispatchers.IO) { fileLock.withLock {
-        val removed = db.withTransaction {
+        db.withTransaction {
             val all = dao.nodes()
+            val root = all.find { it.id == id } ?: return@withTransaction
             val ids = mutableSetOf(id)
             do { val size = ids.size; all.filter { it.parentId in ids }.forEach { ids.add(it.id) } } while (size != ids.size)
+            val payload = JSONArray(); all.filter { it.id in ids }.forEach { payload.put(it.toJson()) }
+            val noteIds=db.features().allLinks().filter{it.topicId in ids}.map{it.recordId}.toSet()
+            val notes=dao.notes().filter{it.id in noteIds};val noteJson=JSONArray()
+            notes.forEach{note->noteJson.put(JSONObject().put("id",note.id).put("title",note.title).put("body",note.body).put("updatedAt",note.updatedAt));dao.deleteNote(note.id)}
+            db.features().save(TrashEntry(kind="node",title=root.title,payload=JSONObject().put("nodes",payload).put("notes",noteJson).toString()))
             dao.deleteNode(id)
-            all.filter { it.id in ids }.mapNotNull { it.localName }
-        }
-        removed.forEach { name ->
-            val file = document(name)
-            check(!file.exists() || file.delete()) { "资料条目已移除，但部分本地副本清理失败；请在本地存储中重试清理" }
         }
     } }
     fun document(name: String): File {
@@ -111,7 +128,7 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
     }
     suspend fun storageBytes(): Long = withContext(Dispatchers.IO) { documents.listFiles()?.sumOf { it.length() } ?: 0L }
     suspend fun cleanOrphans(): Int = withContext(Dispatchers.IO) { fileLock.withLock {
-        val retained = dao.nodes().mapNotNull { it.localName }.toSet()
+        val retained = (dao.nodes() + db.features().allTrash().flatMap { it.nodes() }).mapNotNull { it.localName }.toSet()
         val orphaned = documents.listFiles().orEmpty().filter { it.name !in retained }
         orphaned.forEach { check(it.delete()) { "部分未关联副本清理失败，请重试" } }
         orphaned.size
@@ -190,7 +207,7 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         }
     }
     suspend fun loadExamples() = db.withTransaction {
-        require(dao.nodes().isEmpty() && dao.courses().isEmpty() && dao.notes().isEmpty()) { "示例仅能载入空资料库，避免影响已有内容" }
+        require(dao.nodes().isEmpty() && dao.courses().isEmpty() && dao.notes().isEmpty() && db.features().allTrash().isEmpty()) { "示例仅能载入空资料库（含回收站），避免影响已有内容" }
         DemoData.courses.forEach { dao.save(LocalCourse(it.id,it.title,it.day,it.slot,it.room,it.teacher, example = true)) }
         DemoData.groups.forEach { g ->
             dao.save(LibraryNode(g.id,kind=NodeKind.GROUP,title=g.title,rule=g.organizationRule,example=true))
@@ -201,4 +218,114 @@ class LocalRepository(private val context: Context, val db: CampusDatabase) {
         }
     }
     companion object { const val MAX_IMPORT_BYTES = 100L * 1024 * 1024 }
+
+    suspend fun saveSemester(value: Semester) = db.withTransaction {
+        require(value.name.isNotBlank() && value.weeks in 1..30) { "请填写学期名称，总周数须为 1–30" }
+        val date = try { LocalDate.parse(value.startDate) } catch (_: Exception) { error("开始日期格式为 yyyy-MM-dd") }
+        require(date.dayOfWeek.value == 1) { "学期开始日期请选择第一周的周一" }
+        val times = try { value.times() } catch (_: Exception) { error("节次格式为 08:00-08:45，每行一节") }
+        require(times.size in 1..16 && times.all { it.first < it.second } && times.zipWithNext().all { it.first.second <= it.second.first }) { "请设置 1–16 节顺序排列且不重叠的上课时间" }
+        val placed = db.features().allPlacements().filter { it.semesterId == value.id }
+        require(placed.all { it.endPeriod <= times.size }) { "已有课程超出新节次范围，请先调整课程" }
+        require(dao.courses().filter { c -> placed.any { it.courseId == c.id } }.all { it.lastWeek <= value.weeks }) { "已有课程超出新学期周数" }
+        db.features().save(value.copy(name=value.name.trim()))
+    }
+    private suspend fun checkCourseConflict(course: LocalCourse, rule: CoursePlacement) {
+        val placements = db.features().allPlacements().associateBy { it.courseId }
+        require(dao.courses().none { other ->
+            val p = placements[other.id] ?: CoursePlacement.legacy(other)
+            other.id != course.id && other.day == course.day && p.semesterId == rule.semesterId &&
+                p.startPeriod <= rule.endPeriod && rule.startPeriod <= p.endPeriod &&
+                (1..30).any { rule.occurs(course,it) && p.occurs(other,it) }
+        }) { "课程在相同教学周与节次发生冲突" }
+    }
+    suspend fun saveScheduledCourse(course: LocalCourse, rule: CoursePlacement) = db.withTransaction {
+        require(course.id == rule.courseId && course.title.isNotBlank() && course.day in 0..6) { "请填写课程名称与星期" }
+        val semester = rule.semesterId?.let { id -> db.features().allSemesters().find { it.id == id } ?: error("学期已不存在") }
+        val maxWeek = semester?.weeks ?: 30
+        require(course.firstWeek in 1..maxWeek && course.lastWeek in course.firstWeek..maxWeek) { "课程周次超出学期范围" }
+        require(rule.startPeriod in 1..(semester?.times()?.size ?: 10) && rule.endPeriod in rule.startPeriod..(semester?.times()?.size ?: 10)) { "节次超出范围" }
+        require(rule.pattern in setOf("all","odd","even","custom")) { "周次规则无效" }
+        if (rule.pattern == "custom") {
+            val weeks = rule.customWeeks.split(',').map { it.trim().toIntOrNull() }
+            require(weeks.isNotEmpty() && weeks.all { it != null && it in course.firstWeek..course.lastWeek }) { "指定周请用英文逗号分隔，并在起止周内" }
+        }
+        require((course.firstWeek..course.lastWeek).any { rule.occurs(course,it) }) { "此规则没有任何上课周次" }
+        checkCourseConflict(course,rule)
+        dao.save(course.copy(title=course.title.trim(),slot=((rule.startPeriod-1)/2).coerceIn(0,4)))
+        db.features().save(rule)
+    }
+    suspend fun saveTodo(value: CampusTodo) {
+        require(value.title.isNotBlank()) { "请填写待办标题" }
+        require(!value.remind) { "提醒将在后续通知阶段接入，请先关闭提醒保存" }
+        require(value.courseId == null || dao.courses().any { it.id == value.courseId }) { "关联课程已不存在" }
+        db.features().save(value.copy(title=value.title.trim()))
+    }
+    suspend fun deleteTodo(id: String) = db.withTransaction {
+        val t = db.features().allTodos().find { it.id == id } ?: return@withTransaction
+        db.features().save(TrashEntry(kind="todo",title=t.title,payload=JSONObject().put("id",t.id).put("title",t.title)
+            .put("body",t.body).put("dueAt",t.dueAt).put("courseId",t.courseId).put("done",t.done).toString()))
+        db.features().deleteTodo(id)
+    }
+    suspend fun restoreTrash(id: String) = db.withTransaction {
+        val item = db.features().allTrash().find { it.id == id } ?: error("回收站条目不存在")
+        val json = if(item.kind == "node") null else JSONObject(item.payload)
+        when(item.kind) {
+            "node" -> {
+                val nodes = item.nodes(); val active = dao.nodes().map { it.id }.toMutableSet()
+                require(nodes.none { it.id in active }) { "恢复位置存在同 ID 内容，未覆盖任何资料" }
+                val pending = nodes.toMutableList()
+                while(pending.isNotEmpty()) {
+                    val ready = pending.filter { it.parentId == null || it.parentId in active }
+                    require(ready.isNotEmpty()) { "上级资料尚未恢复，请先恢复其所属大组或主题" }
+                    ready.forEach { dao.save(it); active.add(it.id); pending.remove(it) }
+                }
+                val activeNotes=dao.notes().map{it.id}.toSet()
+                require(item.notes().none{it.id in activeNotes}){"恢复的文字记录已存在，未覆盖原记录"}
+                item.notes().forEach{dao.save(it)}
+            }
+            "note" -> { val j=json!!; require(dao.notes().none { it.id==j.getString("id") }) { "记录已存在" }; dao.save(Note(j.getString("id"),j.getString("title"),j.getString("body"),j.getLong("updatedAt"))) }
+            "todo" -> { val j=json!!; require(db.features().allTodos().none { it.id==j.getString("id") }) { "待办已存在" }; db.features().save(CampusTodo(j.getString("id"),j.getString("title"),j.getString("body"),if(j.isNull("dueAt")) null else j.getLong("dueAt"),j.nullable("courseId"),j.optBoolean("done"))) }
+            "course" -> {
+                val j=json!!; val c=LocalCourse(j.getString("id"),j.getString("title"),j.getInt("day"),j.getInt("slot"),j.getString("room"),j.getString("teacher"),j.getInt("firstWeek"),j.getInt("lastWeek"),j.optBoolean("example"))
+                require(dao.courses().none { it.id==c.id }) { "课程已存在" }
+                val p=j.optJSONObject("placement")?.let { CoursePlacement(c.id,it.nullable("semesterId"),it.getInt("startPeriod"),it.getInt("endPeriod"),it.getString("pattern"),it.getString("customWeeks")) } ?: CoursePlacement.legacy(c)
+                saveScheduledCourse(c,p)
+            }
+        }
+        db.features().deleteTrash(id)
+    }
+    suspend fun purgeTrash(id: String) = withContext(Dispatchers.IO) { fileLock.withLock {
+        val item=db.features().allTrash().find { it.id==id } ?: return@withLock
+        val names=item.nodes().mapNotNull { it.localName }
+        db.features().deleteTrash(id)
+        val retained=(dao.nodes()+db.features().allTrash().flatMap { it.nodes() }).mapNotNull { it.localName }.toSet()
+        names.filter { it !in retained }.forEach { name -> val f=document(name); check(!f.exists()||f.delete()) { "部分副本清理失败，请稍后清理未关联副本" } }
+    } }
+    suspend fun inboxTopic(): String = db.withTransaction {
+        if(dao.nodes().none { it.id=="inbox" }) dao.save(LibraryNode("inbox",kind=NodeKind.GROUP,title="待整理收件箱"))
+        if(dao.nodes().none { it.id=="inbox-subject" }) dao.save(LibraryNode("inbox-subject","inbox",NodeKind.SUBJECT,"未分类"))
+        if(dao.nodes().none { it.id=="inbox-topic" }) dao.save(LibraryNode("inbox-topic","inbox-subject",NodeKind.TOPIC,"待整理"))
+        "inbox-topic"
+    }
+    suspend fun linkRecord(link: RecordLink) {
+        require(link.courseId==null||dao.courses().any { it.id==link.courseId }) { "课程已不存在" }
+        require(link.topicId==null||dao.nodes().any { it.id==link.topicId&&it.kind==NodeKind.TOPIC }) { "主题已不存在" }
+        require(dao.notes().any { it.id==link.recordId }||dao.nodes().any { it.id==link.recordId }) { "记录已不存在" }
+        db.features().save(link)
+    }
+    suspend fun archiveOriginal(recordId: String, topicId: String) = db.withTransaction {
+        val all=dao.nodes(); val node=all.find { it.id==recordId&&it.kind==NodeKind.ORIGINAL } ?: error("原件已不存在")
+        require(all.any { it.id==topicId&&it.kind==NodeKind.TOPIC }) { "主题已不存在" }
+        dao.save(node.copy(parentId=topicId))
+    }
+    suspend fun assignRecord(recordId:String,courseId:String?,topicId:String?) = db.withTransaction {
+        linkRecord(RecordLink(recordId,courseId,topicId))
+        if(dao.nodes().any{it.id==recordId&&it.kind==NodeKind.ORIGINAL})archiveOriginal(recordId,topicId?:inboxTopic())
+    }
+    suspend fun importDocuments(topicId:String,uris:List<Uri>):String {
+        var saved=0;var failed=0
+        uris.forEach {uri->try{importDocument(topicId,uri);saved++}catch(e:Exception){if(e is kotlinx.coroutines.CancellationException)throw e;failed++}}
+        return if(failed==0)"已导入 $saved 份原件，未调用 AI；外部源文件不变" else "已保存 $saved 份原件，$failed 份导入失败；已保存内容保留，请检查文件权限、大小及存储空间后重试失败文件"
+    }
 }

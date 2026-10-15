@@ -67,8 +67,11 @@ private fun ColumnScope.ChatPanel(compact: Boolean) {
     LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("chat_history"), state = scroll,
         verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
         if (messages.isEmpty()) item {
-            Text("主动发送到更多中配置的 DeepSeek 服务，对话保存在本机。每次发送最近最多 20 轮完整对话；不会自动上传资料库。取消和失败的回复保留供查看，不进入后续上下文。",
-                style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.fillMaxWidth().padding(vertical=if(compact)4.dp else 24.dp),horizontalAlignment=androidx.compose.ui.Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){
+                if(!compact){LineGlyph("助手");Text("今天想聊些什么？",style=MaterialTheme.typography.headlineSmall);Text("解释知识点，梳理课堂内容。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary)}
+                listOf("帮我解释函数与极限","帮我梳理课堂笔记的重点").forEach{prompt->OutlinedButton(onClick={draft=prompt},modifier=Modifier.fillMaxWidth(),enabled=running==null){Text(prompt,style=MaterialTheme.typography.bodySmall)}}
+                Text("主动发送时调用已配置服务，不会自动读取资料库。",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.secondary)
+            }
         }
         items(messages, key = { it.id }) { row ->
             OutlinedCard(Modifier.fillMaxWidth().testTag("chat_${row.id}")) {
@@ -84,11 +87,27 @@ private fun ColumnScope.ChatPanel(compact: Boolean) {
             }
         }
     }
-    OutlinedTextField(draft, { if (it.length <= 8000) draft = it }, label = { Text("对话草稿") },
-        placeholder = { Text("输入课堂问题") }, modifier = Modifier.fillMaxWidth().testTag("ai_draft"),
-        minLines = 1, maxLines = 3, readOnly = running != null)
-    Button(onClick = { vm.sendChat(draft) { draft = "" } }, enabled = ready && running == null && draft.isNotBlank(),
-        modifier = Modifier.fillMaxWidth().testTag("ai_send")) { Text("发送") }
+    var configOpen by rememberSaveable { mutableStateOf(false) }
+    var attachOpen by rememberSaveable { mutableStateOf(false) }
+    var strengthInfo by rememberSaveable { mutableStateOf(false) }
+    Surface(shape=androidx.compose.foundation.shape.RoundedCornerShape(20.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,
+        border=androidx.compose.foundation.BorderStroke(1.dp,MaterialTheme.colorScheme.outline)) {
+        Column(Modifier.padding(8.dp)) {
+            OutlinedTextField(draft, { if (it.length <= 8000) draft = it }, placeholder = { Text("输入问题，或聊聊课堂内容…",style=MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.fillMaxWidth().testTag("ai_draft"),minLines=1,maxLines=if(compact)1 else 3,readOnly=running!=null,
+                colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=androidx.compose.ui.graphics.Color.Transparent,unfocusedBorderColor=androidx.compose.ui.graphics.Color.Transparent))
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+                TextButton(onClick={attachOpen=true},contentPadding=PaddingValues(2.dp),modifier=Modifier.width(24.dp)){Text("＋")}
+                TextButton(onClick={attachOpen=true},contentPadding=PaddingValues(2.dp)){Text("语音",style=MaterialTheme.typography.labelSmall)}
+                TextButton(onClick={strengthInfo=true},contentPadding=PaddingValues(2.dp)){Text("默认 ⌄",style=MaterialTheme.typography.labelSmall)}
+                TextButton(onClick={configOpen=true},contentPadding=PaddingValues(2.dp),modifier=Modifier.weight(1f)){Text(config.model.ifBlank{"模型"}+" ⌄",style=MaterialTheme.typography.labelSmall,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)}
+                Button(onClick={vm.sendChat(draft){draft=""}},enabled=ready&&running==null&&draft.isNotBlank(),contentPadding=PaddingValues(0.dp),modifier=Modifier.size(36.dp).testTag("ai_send")){Text("↑")}
+            }
+        }
+    }
+    if(configOpen)ModelSettingsDialog{configOpen=false}
+    if(attachOpen)NotImplementedDialog("语音与附件","当前对话仅发送文字。音频、照片、Word/PPT/PDF 可先从首页或资料库导入原件；识别与附件对话将在后续阶段接入。"){attachOpen=false}
+    if(strengthInfo)NotImplementedDialog("思考强度","当前服务尚未验证推理档位能力，因此使用模型默认设置，不伪造轻量/标准/深入参数。"){strengthInfo=false}
 }
 
 @Composable

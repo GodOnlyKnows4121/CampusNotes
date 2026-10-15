@@ -18,7 +18,8 @@ import javax.crypto.spec.GCMParameterSpec
 private val Context.settingsDataStore by preferencesDataStore(name = "settings")
 enum class ProviderKind(val label: String) { DEEPSEEK("DeepSeek"), ASR("语音识别 ASR"), OCR("文字识别 OCR") }
 data class ProviderConfig(val endpoint: String = "", val model: String = "", val hasKey: Boolean = false)
-data class LocalSettings(val providers: Map<ProviderKind,ProviderConfig> = emptyMap(), val sandboxEnabled: Boolean = false)
+data class LocalSettings(val providers: Map<ProviderKind,ProviderConfig> = emptyMap(), val sandboxEnabled: Boolean = false,
+    val activeSemester: String? = null, val groupModes: Map<String,String> = emptyMap())
 
 /** Only authenticated ciphertext enters DataStore; key material stays in Android Keystore. */
 class KeyCipher {
@@ -51,9 +52,13 @@ class SettingsStore(context: Context, private val cipher: KeyCipher = KeyCipher(
     private val store = context.settingsDataStore
     private fun field(kind: ProviderKind, name: String) = stringPreferencesKey("${kind.name}.$name")
     private val sandbox = booleanPreferencesKey("sandboxEnabled")
+    private val semester = stringPreferencesKey("activeSemester")
+    private val modes = stringPreferencesKey("groupModes")
     val data = store.data.map { p -> LocalSettings(ProviderKind.entries.associateWith { k ->
         ProviderConfig(p[field(k,"endpoint")] ?: "", p[field(k,"model")] ?: "", !p[field(k,"key")].isNullOrBlank())
-    }, p[sandbox] ?: false) }
+    }, p[sandbox] ?: false, p[semester], try { val json=org.json.JSONObject(p[modes]?:"{}"); json.keys().asSequence().associateWith { json.getString(it) } } catch (_: Exception) { emptyMap() }) }
+    suspend fun activeSemester(id: String?) { store.edit { if(id==null) it.remove(semester) else it[semester]=id } }
+    suspend fun groupMode(id: String, mode: String) { require(mode in listOf("课堂模式","项目模式","自定义模式")); store.edit { val json=org.json.JSONObject(it[modes]?:"{}"); json.put(id,mode); it[modes]=json.toString() } }
     suspend fun save(kind: ProviderKind, endpoint: String, model: String, newKey: String, removeKey: Boolean) {
         require(endpoint.length <= 2048 && model.length <= 200) { "地址或模型名称过长" }
         validateEndpoint(endpoint)

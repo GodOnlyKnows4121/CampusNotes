@@ -1,78 +1,93 @@
 package cn.campus.notes.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import cn.campus.notes.data.*
+import java.time.*
 
-/** Fixed viewport: compact mode removes secondary copy rather than adding scrolling. */
 @Composable
-fun HomeScreen(onNavigate: (Destination) -> Unit) {
-    val data = LocalContent.current
-    val today = java.time.LocalDate.now().dayOfWeek.value - 1
-    val courseText = data.courses.firstOrNull { it.day == today }?.let { "${it.title}${if (it.example) " · 示例" else ""} · ${it.room}" } ?: "今日暂无课程"
-    val latest = data.nodes.lastOrNull { it.kind == cn.campus.notes.data.NodeKind.ORIGINAL }?.title ?: "还没有导入资料"
-    var showCapture by rememberSaveable { mutableStateOf(false) }
-    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp).testTag("home_screen")) {
-        val compact = maxHeight < 420.dp || LocalDensity.current.fontScale > 1.3f
-        val landscape = maxWidth > maxHeight
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("本地首页 · V2.1.10", style = MaterialTheme.typography.labelMedium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.secondary)
-            if (!compact) {
-                Text("把课堂和灵感留在这里", style = MaterialTheme.typography.headlineSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (landscape) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HomeTile("今日课程", courseText, "按星期展示，具体周次请查看课表", compact,
-                        Modifier.weight(1f).fillMaxHeight()) { onNavigate(Destination.SCHEDULE) }
-                    HomeTile("最近资料", latest, "学科 → 课堂主题 → 原件与成果", compact,
-                        Modifier.weight(1f).fillMaxHeight()) { onNavigate(Destination.LIBRARY) }
-                    HomeTile("AI 助手", "对话与整理代理", "配置 DeepSeek 后使用流式对话与文本整理", compact,
-                        Modifier.weight(1f).fillMaxHeight()) { onNavigate(Destination.AI) }
+fun HomeScreen(onNavigate:(Destination)->Unit) {
+    val vm=LocalCampus.current;val data=LocalContent.current;val semesters by vm.semesters.collectAsState();val placements by vm.placements.collectAsState();val settings by vm.settings.collectAsState()
+    var campus by rememberSaveable{mutableStateOf(false)};var records by rememberSaveable{mutableStateOf(false)};var inbox by rememberSaveable{mutableStateOf(false)}
+    var query by rememberSaveable{mutableStateOf("")};var search by rememberSaveable{mutableStateOf(false)};var unavailable by rememberSaveable{mutableStateOf<String?>(null)};var recordId by rememberSaveable{mutableStateOf<String?>(null)};var allRecent by rememberSaveable{mutableStateOf(false)}
+    val importer=rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->if(uris.isNotEmpty()){
+        var summary="";vm.act(onDone={vm.message.value=summary}){val topic=vm.repository.inboxTopic();summary=vm.repository.importDocuments(topic,uris)}
+    }}
+    val semester=semesters.find{it.id==settings.activeSemester};val now=LocalDateTime.now()
+    val next=(0..7).flatMap{offset->val date=now.toLocalDate().plusDays(offset.toLong());data.courses.mapNotNull{c->
+        val p=placements.find{it.courseId==c.id}?:CoursePlacement.legacy(c);val w=semester?.week(date)
+        val times=semester?.times()?:Semester("legacy","","2020-01-06").times();val time=times.getOrNull(p.startPeriod-1)?.first
+        if(c.day==date.dayOfWeek.value-1&&p.semesterId==semester?.id&&(w==null||p.occurs(c,w))&&time!=null&&LocalDateTime.of(date,time)>now)Triple(c,LocalDateTime.of(date,time),p)else null
+    }}.minByOrNull{it.second}
+    if(campus){CampusScreen({campus=false},{campus=false;onNavigate(Destination.SCHEDULE)});return}
+    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal=16.dp,vertical=4.dp).testTag("home_screen")) {
+        val dense=maxHeight<330.dp||LocalDensity.current.fontScale>1.25f;val landscape=maxWidth>maxHeight
+        @Composable fun CampusCard(modifier:Modifier){
+            OutlinedCard(modifier,shape=RoundedCornerShape(20.dp)) {Row(Modifier.fillMaxSize().padding(if(dense)8.dp else 12.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(if(dense)2.dp else 8.dp)){
+                    Text("我的校园",fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,maxLines=1)
+                    if(!dense)Text("今日课程与校园记录",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary,maxLines=1)
+                    OutlinedButton(onClick={campus=true},contentPadding=PaddingValues(horizontal=8.dp,vertical=0.dp),modifier=Modifier.heightIn(min=28.dp)){Text("进入校园 →",style=MaterialTheme.typography.labelMedium,maxLines=1)}
                 }
-            } else {
-                HomeTile("今日课程", courseText, "按星期展示，具体周次请查看课表", compact,
-                    Modifier.weight(1f).fillMaxWidth()) { onNavigate(Destination.SCHEDULE) }
-                HomeTile("最近资料", latest, "学科 → 课堂主题 → 原件与成果", compact,
-                    Modifier.weight(1f).fillMaxWidth()) { onNavigate(Destination.LIBRARY) }
-                HomeTile("AI 助手", "对话与整理代理", "配置 DeepSeek 后使用流式对话与文本整理", compact,
-                    Modifier.weight(1f).fillMaxWidth()) { onNavigate(Destination.AI) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { showCapture = true }, modifier = Modifier.weight(1f).testTag("capture")) {
-                    OneLine("快速记录")
+                Surface(onClick={next?.let{vm.scheduleFocus.value=it.first.id;onNavigate(Destination.SCHEDULE)}},modifier=Modifier.weight(1f).fillMaxHeight(),shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surfaceContainerLow){
+                    Column(Modifier.padding(if(dense)7.dp else 12.dp),verticalArrangement=Arrangement.Center){
+                        Text(if(semester==null)"课程预览" else "下一节课",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.secondary)
+                        Text(next?.first?.let{it.title+if(it.example)" · 示例" else ""}?:"暂无课程",style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        next?.let {n->if(!dense){Text(if(semester==null)"请设置学期日期" else "${n.second.toLocalDate()} ${n.second.toLocalTime()}",style=MaterialTheme.typography.labelSmall);Text(n.first.room,style=MaterialTheme.typography.labelSmall,maxLines=1)}}
+                    }
                 }
-                OutlinedButton(onClick = { onNavigate(Destination.MORE) }, modifier = Modifier.weight(1f)) {
-                    OneLine("更多工具")
+            }}
+        }
+        @Composable fun Quick(modifier:Modifier){Column(modifier,verticalArrangement=Arrangement.spacedBy(5.dp)){
+            Text("快速记录",fontWeight=FontWeight.Bold,style=if(dense)MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf("录音","拍照","文字","导入").forEach{label->
+                Surface(onClick={when(label){"文字"->records=true;"导入"->importer.launch(arrayOf("*/*"));else->unavailable=label}},
+                    modifier=Modifier.weight(1f).height(if(dense)44.dp else 66.dp).then(if(label=="文字")Modifier.testTag("capture")else Modifier),
+                    shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surfaceContainerLow){
+                    Column(Modifier.padding(4.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+                        if(!dense)LineGlyph(label)
+                        Text(label,style=MaterialTheme.typography.labelMedium,maxLines=1)
+                    }
                 }
-            }
+            }}
+        }}
+        @Composable fun Recent(modifier:Modifier){Column(modifier,verticalArrangement=Arrangement.spacedBy(5.dp)){
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text("最近记录",style=if(dense)MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);TextButton(onClick={allRecent=true},contentPadding=PaddingValues(0.dp),modifier=Modifier.heightIn(min=24.dp)){Text("查看全部 ›",style=MaterialTheme.typography.labelSmall)}}
+            val recent=(data.notes.take(2).map{Triple(it.id,it.title,"文字记录")}+data.nodes.filter{it.kind==NodeKind.ORIGINAL}.takeLast(2).map{Triple(it.id,it.title,"原始资料")}).take(2)
+            if(recent.isEmpty())Text("还没有记录，从快速记录开始。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary)
+            recent.forEach{(id,title,meta)->OutlinedCard(onClick={recordId=id},modifier=Modifier.fillMaxWidth().weight(1f),shape=RoundedCornerShape(16.dp)){
+                Column(Modifier.fillMaxSize().padding(horizontal=12.dp,vertical=if(dense)3.dp else 8.dp),verticalArrangement=Arrangement.Center){Text(title,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis);if(!dense)Text(meta,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.secondary)}
+            }}
+        }}
+        Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(if(dense)6.dp else 12.dp)){
+            OutlinedTextField(query,{query=it},placeholder={Text("搜索课程、笔记与资料…",style=MaterialTheme.typography.bodySmall,maxLines=1)},singleLine=true,
+                modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp),trailingIcon={TextButton(onClick={search=true}){Text("搜索",style=MaterialTheme.typography.labelSmall)}})
+            if(landscape)Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(8.dp)){CampusCard(Modifier.weight(1.2f).fillMaxHeight());Quick(Modifier.weight(1f));Recent(Modifier.weight(1f).fillMaxHeight())}
+            else{CampusCard(Modifier.fillMaxWidth().weight(1.15f));Quick(Modifier.fillMaxWidth());Recent(Modifier.fillMaxWidth().weight(1f))}
         }
     }
-    if (showCapture) RecordsDialog { showCapture = false }
-}
-
-@Composable
-private fun HomeTile(title: String, value: String, description: String, compact: Boolean,
-    modifier: Modifier, onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = modifier) {
-        BoxWithConstraints(Modifier.fillMaxSize().padding(if (compact) 10.dp else 16.dp)) {
-            val showValue = maxHeight >= 44.dp * LocalDensity.current.fontScale
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-                Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (showValue) {
-                    if (!compact) Spacer(Modifier.height(4.dp))
-                    Text(value, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (!compact) Text(description, style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+    if(records)RecordsDialog{records=false};if(inbox)InboxDialog{inbox=false};recordId?.let{id->LocalRecordDialog(id){recordId=null}}
+    if(allRecent)EditorFrame("全部记录",{allRecent=false},footer={TextButton(onClick={allRecent=false}){Text("返回")};TextButton(onClick={allRecent=false;inbox=true}){Text("待整理收件箱")}}){
+        (data.notes.map{it.id to it.title}+data.nodes.filter{it.kind==NodeKind.ORIGINAL}.map{it.id to it.title}).forEach{(id,title)->TextButton(onClick={allRecent=false;recordId=id}){Text(title)}}
+    }
+    unavailable?.let{label->NotImplementedDialog(label,"${label}将在记录与识别阶段接入；当前可以导入音频、照片或文档原件。"){unavailable=null}}
+    if(search)EditorFrame("搜索本地资料",{search=false},footer={TextButton(onClick={search=false}){Text("返回")}}){
+        val text=query.trim();if(text.isBlank())Text("请先输入关键词")else{
+            data.courses.filter{it.title.contains(text,true)}.forEach{c->TextButton(onClick={search=false;vm.scheduleFocus.value=c.id;onNavigate(Destination.SCHEDULE)}){Text("课程 · ${c.title}")}}
+            data.notes.filter{it.title.contains(text,true)||it.body.contains(text,true)}.forEach{n->TextButton(onClick={search=false;recordId=n.id}){Text("记录 · ${n.title}")}}
+            data.nodes.filter{it.localName!=null&&it.title.contains(text,true)}.forEach{f->TextButton(onClick={search=false;recordId=f.id}){Text("资料 · ${f.title}")}}
         }
     }
 }

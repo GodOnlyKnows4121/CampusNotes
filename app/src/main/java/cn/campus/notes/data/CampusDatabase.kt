@@ -72,10 +72,21 @@ interface CampusDao {
     @Query("DELETE FROM nodes WHERE id = :id") suspend fun deleteNode(id: String)
 }
 
-@Database(entities = [Note::class, LocalCourse::class, LibraryNode::class, ChatMessage::class, OrganizeTask::class], version = 2, exportSchema = true)
+@Database(entities = [Note::class, LocalCourse::class, LibraryNode::class, ChatMessage::class, OrganizeTask::class,
+    Semester::class, CoursePlacement::class, CampusTodo::class, RecordLink::class, TrashEntry::class], version = 3, exportSchema = true)
 abstract class CampusDatabase : RoomDatabase() {
     abstract fun dao(): CampusDao
+    abstract fun features(): FeatureDao
     companion object {
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS semesters (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, startDate TEXT NOT NULL, weeks INTEGER NOT NULL, periods TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS course_placements (courseId TEXT NOT NULL PRIMARY KEY, semesterId TEXT, startPeriod INTEGER NOT NULL, endPeriod INTEGER NOT NULL, pattern TEXT NOT NULL, customWeeks TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS campus_todos (id TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, dueAt INTEGER, courseId TEXT, done INTEGER NOT NULL, remind INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS record_links (recordId TEXT NOT NULL PRIMARY KEY, courseId TEXT, topicId TEXT)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS trash_entries (id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, payload TEXT NOT NULL, deletedAt INTEGER NOT NULL)")
+            }
+        }
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL, createdAt INTEGER NOT NULL)")

@@ -86,8 +86,8 @@ fun RecordsDialog(onDismiss: () -> Unit) {
                 vm.repository.saveNote(Note(note?.id ?: newId(), values[0], values[1]))
             } }
     } }
-    deleteId?.let { id -> DeleteConfirmation("记录", "删除后无法恢复。", { deleteId = null }) {
-        vm.act("记录已删除", { deleteId = null }) { vm.repository.deleteNote(id) }
+    deleteId?.let { id -> DeleteConfirmation("记录", "移入回收站后可恢复。", { deleteId = null }) {
+        vm.act("记录已移入回收站", { deleteId = null }) { vm.repository.deleteNote(id) }
     } }
 }
 

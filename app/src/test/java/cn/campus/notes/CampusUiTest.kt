@@ -93,6 +93,50 @@ class CampusUiTest {
         compose.onNodeWithTag("subject_project").assertDoesNotExist()
     }
 
+    @Test fun enlargedCourseKeepsInsideTapsAndClosesOnBlank() {
+        compose.setContent { CampusApp() };awaitHome()
+        compose.onNodeWithTag("nav_SCHEDULE").performClick()
+        compose.onNodeWithTag("course_math").performClick()
+        compose.onNodeWithTag("course_details").performClick()
+        compose.onNodeWithTag("course_details").assertIsDisplayed()
+        screenshot("course-expanded")
+        compose.onNodeWithTag("course_blank").performTouchInput { click(androidx.compose.ui.geometry.Offset(width-3f,height-3f)) }
+        compose.onNodeWithTag("course_details").assertDoesNotExist()
+    }
+
+    @Test fun realSemesterCalendarSelectsTeachingWeek() {
+        val app=compose.activity.application as CampusApplication
+        val now=java.time.LocalDate.now()
+        val start=now.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).minusWeeks(6)
+        val term=cn.campus.notes.data.Semester("term","秋季学期",start.toString())
+        val target=now.withDayOfMonth(1)
+        runBlocking { app.repository.saveSemester(term);app.settings.activeSemester("term") }
+        compose.setContent { CampusApp() };awaitHome()
+        compose.onNodeWithTag("nav_SCHEDULE").performClick()
+        compose.waitUntil(10_000){compose.onAllNodesWithText("秋季学期").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithTag("week_calendar").performClick()
+        compose.onNodeWithTag("semester_calendar").assertIsDisplayed()
+        compose.onNodeWithTag("date_$target").performClick()
+        compose.onNodeWithText("第 ${term.week(target)} 周 ⌄").assertIsDisplayed()
+        compose.onNodeWithTag("semester_calendar").assertDoesNotExist()
+    }
+
+    @Test fun campusTodoCanBeCreatedCompletedAndMovedToTrash() {
+        val app=compose.activity.application as CampusApplication
+        compose.setContent { CampusApp() };awaitHome()
+        compose.onNodeWithText("进入校园 →").performClick()
+        compose.onNodeWithText("新增").performScrollTo().performClick()
+        compose.onNodeWithTag("todo_title").performTextInput("复习极限")
+        compose.onNodeWithTag("todo_body").performTextInput("完成课后练习")
+        compose.onNodeWithTag("todo_save").performClick()
+        compose.waitUntil(10_000){runBlocking{app.database.features().allTodos().size==1}}
+        compose.onNode(isToggleable()).performScrollTo().performClick()
+        compose.waitUntil(10_000){runBlocking{app.database.features().allTodos().single().done}}
+        compose.onNodeWithText("移入回收站").performScrollTo().performClick()
+        compose.waitUntil(10_000){runBlocking{app.database.features().allTodos().isEmpty()}}
+        runBlocking{org.junit.Assert.assertEquals("复习极限",app.database.features().allTrash().single().title)}
+    }
+
     @Test fun tabSwitchAndSavedStateRestoreKeepDraftAndSelection() {
         val restoration = StateRestorationTester(compose)
         restoration.setContent { CampusApp() }
@@ -225,8 +269,8 @@ class CampusUiTest {
         compose.setContent { CampusApp() }
         awaitHome()
         compose.onNodeWithTag("capture").assertIsDisplayed()
-        compose.onNodeWithText("今日课程").assertIsDisplayed()
-        compose.onNodeWithText("最近资料").assertIsDisplayed()
+        compose.onNodeWithText("我的校园").assertIsDisplayed()
+        compose.onNodeWithText("最近记录").assertIsDisplayed()
         compose.onNodeWithTag("nav_MORE").assertIsDisplayed()
         screenshot("home-landscape")
     }
