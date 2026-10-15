@@ -22,6 +22,8 @@ class DeviceSmokeTest {
     private val instrumentation get() = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
     private lateinit var activity: MainActivity
     private lateinit var data: LocalData
+    private lateinit var originalSession: String
+    private val ownedSessions = mutableListOf<String>()
     @Before fun readExistingDatabase() {
         instrumentation.uiAutomation.executeShellCommand(
             "am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n cn.campus.notes/.MainActivity"
@@ -40,12 +42,58 @@ class DeviceSmokeTest {
         val repo = (activity.application as CampusApplication).repository
         data = runBlocking { repo.data.first() }
         val vm = ViewModelProvider(activity)[CampusViewModel::class.java]
-        compose.waitUntil(15_000) { vm.ready.value && vm.settingsReady.value && vm.data.value == data }
+        compose.waitUntil(15_000) { vm.ready.value && vm.settingsReady.value && vm.aiReady.value && vm.sessions.value.isNotEmpty() && vm.data.value == data }
+        // Drafts are persistent now: never type into or clear the user's current session.
+        originalSession = runBlocking { (activity.application as CampusApplication).settings.data.first().activeChatSession }
+        val fixture = runBlocking { vm.sessionStore.create(vm.currentSession.value?.profileId ?: LEGACY_CHAT) }
+        ownedSessions += fixture.id
+        runBlocking { vm.settingsStore.activeChatSession(fixture.id) }
+        instrumentation.runOnMainSync { vm.activeChat.value = fixture.id }
+        compose.waitUntil(15_000) { vm.sessions.value.any { it.id == fixture.id } }
         compose.onNodeWithTag("home_screen").assertIsDisplayed()
     }
     private fun resumedActivity(): MainActivity? = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
         .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
-    @After fun finishTestWindow() { instrumentation.runOnMainSync { if (::activity.isInitialized) activity.finish() } }
+    @After fun finishTestWindow() {
+        if (!::activity.isInitialized) return
+        val app = activity.application as CampusApplication
+        instrumentation.runOnMainSync { activity.finish() }
+        instrumentation.waitForIdleSync()
+        runBlocking {
+            ownedSessions.forEach { id -> app.database.sessions().clear(id); app.database.sessions().delete(id) }
+            if (::originalSession.isInitialized) app.settings.activeChatSession(originalSession)
+        }
+    }
+
+    @Test fun independentSessionDraftAndThinkingMenuWorkWithoutModelCalls() {
+        val vm = ViewModelProvider(activity)[CampusViewModel::class.java]
+        val first = vm.activeChat.value
+        compose.onNodeWithTag("nav_AI").performClick()
+        compose.onNodeWithTag("ai_draft").performTextInput("隔离会话草稿")
+        compose.onNodeWithTag("chat_sessions").performClick()
+        val count = vm.sessions.value.size
+        compose.onNodeWithTag("new_chat_session").performClick()
+        compose.waitUntil(15_000) { vm.sessions.value.size == count + 1 && !vm.busy.value }
+        val second = vm.activeChat.value
+        ownedSessions += second
+        compose.onNodeWithTag("select_session_$second").performScrollTo().performClick()
+        compose.onNodeWithTag("ai_draft").assert(SemanticsMatcher.expectValue(
+            androidx.compose.ui.semantics.SemanticsProperties.EditableText,androidx.compose.ui.text.AnnotatedString("")))
+            .performTextInput("第二会话草稿")
+        val profile=vm.settings.value.chatProfiles.find{it.id==vm.sessions.value.first{it.id==second}.profileId}
+        val level=cn.campus.notes.integration.ModelCapabilities.levels(profile?.endpoint.orEmpty(),profile?.model.orEmpty()).last()
+        compose.onNodeWithTag("chat_strength").performClick()
+        compose.onNodeWithTag("choose_strength_${level.id}").performClick()
+        compose.waitUntil(15_000){vm.sessions.value.any{it.id==second&&it.reasoning==level.id}&&!vm.busy.value}
+        compose.onNodeWithTag("chat_sessions").performClick()
+        compose.onNodeWithTag("select_session_$first").performScrollTo().performClick()
+        compose.onNodeWithTag("ai_draft").assertTextContains("隔离会话草稿")
+        compose.onNodeWithTag("chat_sessions").performClick()
+        compose.onNodeWithTag("select_session_$second").performScrollTo().performClick()
+        compose.onNodeWithTag("ai_draft").assertTextContains("第二会话草稿")
+        val app=activity.application as CampusApplication
+        org.junit.Assert.assertTrue(runBlocking{app.database.sessions().messages(first).isEmpty()&&app.database.sessions().messages(second).isEmpty()})
+    }
 
     @Test fun launchNavigationDraftAndActivityRecreationWork() {
         for (tab in listOf("SCHEDULE", "LIBRARY", "MORE", "HOME", "AI")) {
